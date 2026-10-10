@@ -2,6 +2,9 @@
 
 Status: **draft for review**. Nothing here is built yet; open questions are listed at the end.
 
+**Stack:** Python · LangChain + **LangGraph** (agentic orchestration) · **Azure OpenAI
+models via an Azure AI Foundry project** · **Langfuse** (tracing, prompt management, evaluation).
+
 ## 1. Goal
 
 A set of Python tools that take a **job** (description + requirements) and a pool of
@@ -17,181 +20,275 @@ Ranking factors, in order of weight by default:
 4. **Personal characteristics** (optional, low weight): motivation, communication,
    and values alignment, *only* where the documents show evidence of them.
 
-## 2. Pipeline overview
+## 2. Architecture: a deterministic skeleton with agentic nodes
+
+A ranking tool has to be **reproducible and auditable**, so "agentic" here does not mean
+one free-roaming agent. The design is a **LangGraph state graph**:
+
+- The **outer flow is fixed**: ingest → job profile → per-candidate assessment → rank → report.
+- **Agents work inside nodes** where judgement and adaptive investigation pay off:
+  - drafting the job profile
+  - investigating unclear evidence for a candidate
+  - comparing close candidates
+  - critiquing the final shortlist
+- Every LLM output is a **typed Pydantic object** (`with_structured_output`), and the final
+  numeric aggregation is plain Python, never an LLM.
+- **Human-in-the-loop** checkpoints use LangGraph `interrupt()`.
 
 ```
- job.md / job.pdf ──► [Job parser] ──► JobProfile (requirements + weights, editable YAML)
-                                              │
- candidates/                                  ▼
-   alice/cv.pdf      ┌──────────┐   ┌──────────────┐   ┌─────────┐   ┌──────────┐   ┌─────────┐
-   alice/cover.docx ─► Ingest   ├──►│ Extract      ├──►│ Redact  ├──►│ Score    ├──►│ Rank &  │
-   alice/form.json   │ (text)   │   │ (structured  │   │ (bias   │   │ (per     │   │ Report  │
-   bob/...           └──────────┘   │  profile)    │   │ control)│   │ dimension│   └─────────┘
-                                    └──────────────┘   └─────────┘   └──────────┘
+                         ┌───────────────────────── LangGraph (checkpointed) ─────────────────────────┐
+ job.pdf ──► JobProfiler agent ──► [HITL: approve/edit job.yaml]                                       │
+                                            │                                                         │
+ candidates/ ──► Ingest ──► Extract ──► Redact ──► fan-out per candidate (Send API, parallel)         │
+                                                    │                                                 │
+                                                    ▼                                                 │
+                                    ┌──────── Candidate Assessor (subgraph) ────────┐                 │
+                                    │ 1. baseline scorers (rules + embeddings)       │                 │
+                                    │ 2. rubric scorers (LLM, structured)            │                 │
+                                    │ 3. Evidence agent ◄─ tools ─► loop while       │                 │
+                                    │    low-confidence / unclear must-haves         │                 │
+                                    │ 4. ScoreCard (scores + evidence + confidence)  │                 │
+                                    └───────────────────────────────────────────────┘                 │
+                                                    │ fan-in                                          │
+                                                    ▼                                                 │
+                              Aggregate & rank ──► Pairwise judge (top-K) ──► Shortlist critic        │
+                                                    │                                                 │
+                                    [HITL: review borderline / flagged candidates]                    │
+                                                    ▼                                                 │
+                                                 Report                                               │
+                         └─────────────────── every node/LLM/tool call traced in Langfuse ────────────┘
 ```
-
-Each stage reads and writes plain, typed artefacts (Pydantic models serialised to JSON),
-so stages can be cached, re-run on their own, inspected, and tested.
 
 ## 3. Components
 
 ### 3.1 Ingestion (`cvscore.ingest`)
-- **Formats:** PDF (`pypdf` / `pdfplumber`), DOCX (`python-docx`), TXT/MD. OCR fallback
-  (`pytesseract`) for scanned PDFs, optional extra.
-- **Grouping documents by candidate:** use one folder per candidate by default, or a
-  `manifest.csv` (`candidate_id, cv_path, cover_letter_path, form_path`). A filename
-  convention (`<id>_cv.pdf`) is a fallback.
+- **Formats:** use LangChain document loaders where they fit (`PyPDFLoader`,
+  `Docx2txtLoader`, `TextLoader`) and add our own metadata. An OCR fallback is optional.
+  Azure AI Document Intelligence (`AzureAIDocumentIntelligenceLoader`) is an option for
+  scanned or complex-layout CVs, since we're already on Azure.
+- **Grouping documents by candidate:** use one folder per candidate, or a `manifest.csv`
+  (`candidate_id, cv_path, cover_letter_path, form_path`).
 - **Application forms:** the structure is TBD, so they go through a pluggable
-  `FormAdapter` interface. It starts with generic JSON/YAML/CSV-row adapters that map
-  form fields to `{question, answer}` pairs, and adds specific adapters later
-  (e.g. an ATS export) once the format is known.
-- Output: `CandidateDocuments` (raw text per document + metadata).
+  `FormAdapter` that maps fields to `{question, answer}` pairs. It starts with generic
+  JSON/YAML/CSV adapters and adds specific ones later.
+- Output: `CandidateDocuments`, a list of LangChain `Document`s per candidate with
+  `candidate_id`, `doc_type` and `page` metadata.
 
-### 3.2 Job profile (`cvscore.job`)
-- Parse the job description into a structured **`JobProfile`**:
-  - `must_have`: knock-out criteria (e.g. "5+ yrs backend", "right to work in EU")
-  - `nice_to_have`: weighted preferences
+### 3.2 Job profile: `JobProfiler` agent (`cvscore.job`)
+- A small ReAct-style agent with tools: `read_job_description`, `lookup_skill_taxonomy`
+  (normalises skills and synonyms), and `propose_weights`.
+- Produces a structured **`JobProfile`**:
+  - `must_have` (knock-outs)
+  - `nice_to_have` (weighted)
   - `responsibilities`, `seniority`, `domain`, `key_skills`
-  - `traits`: personal characteristics that matter for *this* role, each with a definition
-  - `weights` per scoring dimension
-- An LLM drafts it, and it is saved as **human-editable YAML**. The recruiter reviews or
-  edits it once, and it drives every candidate's scoring. This is the main lever for
-  consistency and control.
+  - `traits`, each with a definition and examples of evidence
+  - `weights` per dimension
+- Saved as **editable YAML**. The graph then **interrupts** so the recruiter can approve
+  or edit it before any candidate is scored. This is the main lever for consistency.
 
 ### 3.3 Structured extraction (`cvscore.extract`)
-Turn free text into a **`CandidateProfile`**:
-- `experience[]`: title, organisation, start/end dates, duration, seniority,
-  responsibilities, technologies, domain
-- `achievements[]`: statement, metric (if any), scope, linked experience entry, source quote
-- `skills[]`, `education[]`, `certifications[]`, `languages[]`
-- `motivation_signals[]` / `trait_evidence[]`: quotes from the cover letter and form answers
-- Every extracted item keeps a **source span** (document + quote) for traceability.
-
-Implementation: an LLM call with structured outputs (JSON schema from the Pydantic models),
-plus deterministic post-processing such as date normalisation, total and recency-weighted
-years, and de-duplicating skills against a normalisation map.
+- Runs as a chain (`prompt | llm.with_structured_output(CandidateProfile)`), not an agent,
+  because it's a single, well-defined transformation.
+- Produces a **`CandidateProfile`**:
+  - `experience[]`: title, organisation, dates, seniority, responsibilities, tools, domain
+  - `achievements[]`: statement, metric, scope, linked role
+  - `skills[]`, `education[]`, `certifications[]`, `languages[]`
+  - `trait_evidence[]`
+- Every item carries a **source quote + document reference**.
+- Deterministic post-processing: date normalisation, total and recency-weighted years,
+  and skill normalisation.
+- Documents are embedded (`AzureOpenAIEmbeddings`) into a **per-run in-memory vector
+  store** (FAISS / Chroma) that the evidence agent uses for retrieval.
 
 ### 3.4 Redaction / bias control (`cvscore.redact`)
-Runs **before scoring**. It removes or masks name, photo references, gender markers,
-age / date of birth, nationality, marital status, address, and similar fields. Scorers
-see an anonymised profile, and the mapping back to identity is kept separately. Each
-field can be switched on or off in config.
+- Runs **before scoring**. It masks name, gender markers, age / date of birth,
+  nationality, photo, address and marital status (rules + Presidio), and the identity
+  mapping is kept outside the graph state that scorers see.
+- The same masking is applied to Langfuse traces (Langfuse `mask` function), so PII is
+  not stored in the observability backend.
 
-### 3.5 Scoring (`cvscore.score`)
-Every dimension is a pluggable `Scorer` that returns `score ∈ [0, 1]`, `confidence`,
-`rationale`, and `evidence[]`.
+### 3.5 Candidate assessment subgraph (`cvscore.assess`)
+For each candidate, run in parallel with the LangGraph `Send` API and concurrency limits:
 
-| Dimension | Method |
-|---|---|
-| **Hard requirements** | Rule checks + LLM verification per `must_have` → pass / fail / unclear. A fail flags the candidate or knocks them out (configurable), never silently. |
-| **Experience relevance** | Embedding similarity between experience entries and the job responsibilities, weighted by recency (decay) and duration, plus a seniority-fit term. |
-| **Skills match** | Exact/normalised matching + semantic matching (embeddings) against `key_skills` / `nice_to_have`, weighted by where the skill was shown (in a role > in a list). |
-| **Achievements** | LLM rubric scoring (1–5 anchored scale): relevance to the role, magnitude/impact, quantification, and ownership. |
-| **Personal characteristics** | LLM rubric scoring per `trait` from the JobProfile, **evidence-required**: no quote means "insufficient evidence" (neutral), not a low score. Off or low weight by default. |
+1. **Baseline scorers (no LLM, cheap, deterministic)**
+   - Skills match: exact/normalised match + embedding similarity
+   - Experience relevance: embedding similarity of roles to responsibilities × recency decay × duration, plus seniority fit
+   - Rule-based must-have checks (years, degrees, certifications)
+2. **Rubric scorers (LLM, structured output, temperature 0)**
+   - Achievements: anchored 1–5 scale for relevance, impact, quantification, ownership
+   - Personal characteristics: per trait, **evidence-required**. No quote means
+     `insufficient_evidence` (neutral), not a low score.
+   - Must-have verification for items rules couldn't settle → `pass | fail | unclear`
+3. **Evidence agent (agentic loop):** triggered only when something is `unclear`, confidence
+   is low, or the scorers disagree. It has a bounded tool budget (max N steps) and these tools:
+   - `search_candidate_docs(query)`: retrieval over that candidate's documents
+   - `get_section(doc, section)`: read a specific CV section or a form answer
+   - `check_timeline()`: detect overlaps and gaps, and compute tenure
+   - `verify_claim(claim)`: check whether a claim is supported elsewhere in the documents
+   - `rescore(dimension, evidence)`: submit a revised structured score with quotes
 
-**Hybrid by design:** embeddings and rules are cheap, deterministic, and good for
-pre-filtering large pools. LLM judging catches nuance, for example achievements and
-whether experience is transferable. LLM calls use a fixed rubric, temperature 0,
-and anonymised input, and they cite evidence.
+   It may only cite text that is in the candidate's documents. Quotes are validated by
+   string match before they are accepted, which guards against hallucinated evidence.
+4. Output: a **`ScoreCard`** with, per dimension, `score ∈ [0, 1]`, `confidence`,
+   `rationale`, `evidence[]`, plus flags (knock-out failed, inconsistency, needs review).
 
-### 3.6 Ranking (`cvscore.rank`)
-- Weighted aggregate of the dimension scores (weights from the JobProfile), with knock-out handling.
-- Uncertainty is shown alongside the score: low-confidence candidates are flagged for human review.
-- Optional **pairwise re-ranking** of the top-K (LLM compares two anonymised profiles
-  directly, aggregated with Bradley-Terry). This often gives better ordering at the top
-  than absolute scores.
-- Optional **two-stage mode** for large pools: cheap embedding/rule pre-filter, then the full LLM scoring on the top N.
+### 3.6 Ranking & review (`cvscore.rank`)
+- **Aggregate:** a weighted sum in Python using the JobProfile weights, with knock-out
+  handling (exclude or flag, configurable).
+- **Pairwise judge (agentic, optional):** for the top-K and for near-ties, an LLM compares
+  two anonymised ScoreCards and profiles directly. The results are combined with
+  Bradley-Terry. Each pair is judged in both orders to cancel position bias.
+- **Shortlist critic:** a reviewer agent checks the final list. It looks for ranking
+  inversions that contradict the evidence, candidates over-rewarded for keyword stuffing,
+  and missing must-haves. It can only *flag* problems for human review, not change scores.
+- **HITL interrupt:** borderline, flagged and low-confidence candidates are surfaced for
+  a recruiter decision before the report is finalised.
 
 ### 3.7 Reporting (`cvscore.report`)
-- `ranking.csv` / `.xlsx`: one row per candidate with the dimension scores, total, flags
-- `report.html`: a ranked table and a per-candidate drill-down showing evidence quotes
-- `results.json`: the full machine-readable output for downstream tools
-- An audit log of model, prompts version, config hash, and timestamps, so runs are reproducible.
+- `ranking.csv` / `.xlsx`
+- `report.html` (Jinja2): a ranked table and a per-candidate drill-down with evidence quotes and agent investigation notes
+- `results.json`
+- Every row links to its **Langfuse trace**, so any score can be traced back to the exact prompts, tool calls and model outputs.
 
 ### 3.8 Interfaces
 - **CLI** (`typer`):
-  - `cvscore job parse job.pdf -o job.yaml`
-  - `cvscore ingest candidates/ -o work/`
-  - `cvscore score --job job.yaml --candidates candidates/ -o out/`
+  - `cvscore job draft job.pdf -o job.yaml`
+  - `cvscore run --job job.yaml --candidates candidates/ -o out/`
+  - `cvscore resume <run-id>` continues after a HITL interrupt
   - `cvscore report out/`
-- **Python API** (`from cvscore import Pipeline`) for notebooks and integration.
-- A small web UI (Streamlit) could come later. It is not in the MVP.
+- **Python API:** `build_graph(config)` returns a compiled LangGraph, for use from notebooks and integrations.
+- **Checkpointing:** SQLite checkpointer locally (Postgres later), so long runs can be resumed and HITL steps can pause for days.
+- Optional later: LangGraph Studio for visual debugging, and a small Streamlit review UI.
 
-## 4. Proposed repository layout
+## 4. Azure AI Foundry integration (`cvscore.llm`)
+
+- A **single factory** builds every model from config, so nodes never construct clients directly:
+  - **Chat:** `langchain_openai.AzureChatOpenAI` against the Foundry project's Azure OpenAI
+    deployment (`azure_endpoint`, `azure_deployment`, `api_version`). An alternative is
+    `langchain-azure-ai`'s `AzureAIChatCompletionsModel` if you want the Foundry model
+    inference endpoint, for example to use non-OpenAI models from the same catalogue.
+  - **Embeddings:** `AzureOpenAIEmbeddings` (e.g. a `text-embedding-3-large` deployment).
+- **Auth:** **Entra ID** via `azure-identity` (`DefaultAzureCredential` +
+  `get_bearer_token_provider`) by default, with an API key as a fallback for local dev.
+  No secrets in code; settings come from `.env` / environment via `pydantic-settings`.
+- **Model roles**, each mapped to a deployment name in config:
+  - `extractor`: a cheaper or faster model, high volume
+  - `scorer`
+  - `agent`: tool calling
+  - `judge`: the strongest model, used for pairwise and critic work
+- **Reliability:** retries with backoff on 429s, a concurrency semaphore sized to the
+  deployment's TPM quota, request timeouts, and a disk/SQLite LLM cache keyed by
+  (prompt version, model, input hash) so re-runs are cheap.
+- **Data residency:** CV data stays in your Azure tenant and region. Abuse-monitoring and
+  content-logging settings should be reviewed for PII, and an opt-out applied for if needed.
+
+## 5. Langfuse observability (`cvscore.observability`)
+
+- **Tracing:** pass `langfuse.langchain.CallbackHandler` into the graph's `config`
+  (`callbacks=[handler]`). Each run is one Langfuse **session** and each candidate
+  assessment is a **trace**, tagged with `job_id`, `candidate_id` (pseudonymous),
+  `run_id` and config hash. LLM calls, tool calls, token usage, cost and latency are
+  captured automatically, including for the Azure OpenAI models.
+- **Prompt management:** every prompt is stored in Langfuse with versions and labels
+  (`production`, `staging`) and fetched at runtime (`langfuse.get_prompt(...)
+  .get_langchain_prompt()`), with a local fallback copy in the repo. The prompt version
+  is recorded in each ScoreCard for reproducibility.
+- **Scores:** each dimension score and the final rank are logged as Langfuse **scores** on
+  the trace. Recruiter overrides from the HITL step are logged as human-annotation scores,
+  which gives a built-in feedback dataset.
+- **Datasets & experiments:** the synthetic and historical evaluation sets are stored as
+  Langfuse datasets. Every prompt or model change is run as an experiment and compared
+  there (see §7).
+- **Privacy:** **self-host Langfuse** (Docker / Azure Container Apps) or use an EU-region
+  cloud. Redaction and the mask function keep raw PII out of traces.
+
+## 6. Proposed repository layout
 
 ```
 cvscore/
   __init__.py
-  models.py          # Pydantic: JobProfile, CandidateDocuments, CandidateProfile, ScoreCard, ...
-  config.py          # settings, weights, provider selection
-  ingest/            # readers (pdf, docx, txt), form adapters, candidate grouping
-  job/               # JD → JobProfile
-  extract/           # text → CandidateProfile (+ post-processing)
+  config.py            # pydantic-settings: Azure, Langfuse, model roles, weights, limits
+  models.py            # Pydantic: JobProfile, CandidateDocuments, CandidateProfile, ScoreCard, RunResult
+  llm/                 # Azure model factory, auth, cache, rate limiting
+  observability/       # Langfuse handler, masking, score logging, prompt registry
+  prompts/             # local fallback copies of Langfuse prompts
+  ingest/              # loaders, form adapters, candidate grouping
+  job/                 # JobProfiler agent + tools
+  extract/             # extraction chain + post-processing + per-candidate vector store
   redact/
-  score/             # base Scorer + one module per dimension
-  rank/              # aggregation, pairwise, two-stage
-  report/            # csv/xlsx/html/json + templates
-  llm/               # provider abstraction, prompt templates, caching, retries
-  embed/             # embedding backends (local sentence-transformers / API)
+  assess/
+    baseline.py        # rule + embedding scorers
+    rubric.py          # LLM rubric scorers
+    evidence_agent.py  # agentic investigation loop + tools
+    subgraph.py
+  rank/                # aggregation, pairwise judge, shortlist critic
+  graph.py             # top-level LangGraph: state, nodes, edges, interrupts, checkpointer
+  report/              # csv/xlsx/html/json + templates
   cli.py
 tests/
-  fixtures/          # synthetic CVs, cover letters, forms, job descriptions
+  fixtures/            # synthetic CVs, cover letters, forms, job descriptions
+  unit/  integration/  # integration tests use recorded / fake LLM responses
+evals/                 # Langfuse dataset sync + experiment runners
 examples/
 docs/
-pyproject.toml       # uv/hatch, ruff, mypy, pytest
+pyproject.toml         # uv, ruff, mypy, pytest
+.env.example
 ```
 
-## 5. Technology choices (proposed defaults)
+**Key dependencies:** `langchain-core`, `langchain-openai`, `langchain-community`,
+`langgraph`, `langgraph-checkpoint-sqlite`, `langchain-azure-ai` (optional), `azure-identity`,
+`langfuse`, `pydantic`, `pydantic-settings`, `faiss-cpu` or `chromadb`, `pypdf`,
+`docx2txt`, `presidio-analyzer`, `typer`, `rich`, `jinja2`, `pandas`, `openpyxl`.
 
-- Python 3.11+, `pydantic` v2, `typer`, `rich`, `jinja2` (HTML report), `pandas` / `openpyxl`.
-- **LLM:** a thin provider interface. The default is the Anthropic Claude API (a Sonnet-class
-  model for bulk extraction and scoring, an Opus-class model for job parsing and pairwise
-  top-K), with structured outputs and prompt caching. The job profile and rubric are a
-  shared prefix, which makes caching cheap. It can be swapped for a local model when the
-  data must not leave the premises.
-- **Embeddings:** local `sentence-transformers` by default (no data egress, free), API optional.
-- Disk cache keyed by (document hash, prompt version, model), so re-runs cost nothing.
-- Tooling: `ruff`, `mypy`, `pytest`, GitHub Actions CI.
+## 7. Evaluation & quality
 
-## 6. Evaluation & quality
-
-- **Synthetic fixture set:** about 20–30 fake candidates per job, with known "ground truth" tiers.
+- **Synthetic fixture set:** about 20–30 fake candidates per job with known tiers, stored as a Langfuse dataset.
 - **Agreement with humans:** Spearman/Kendall correlation versus recruiter rankings, and precision@K for the shortlist.
-- **Consistency:** score variance across repeated runs and across document formats (PDF vs DOCX of the same CV).
-- **Bias probes:** counterfactual tests that swap names, genders, ages, or schools in otherwise
-  identical CVs and check that the ranking does not move.
-- **Golden tests** for parsers and extraction, and snapshot tests for prompts.
+- **Consistency:** score variance across repeated runs and across file formats of the same CV.
+- **Bias probes:** counterfactual tests that swap names, genders, ages or schools in otherwise
+  identical CVs. The ranking must not move, and this is tracked as an experiment metric.
+- **Agent-specific checks:**
+  - evidence-quote validity rate (every quote must exist in the source)
+  - average number of tool steps
+  - how often the agent changes scores, and whether those changes agree with humans
+- **Offline tests:** the LLM is swapped for `FakeListChatModel` / recorded responses, so
+  CI runs without Azure. A gated job runs live smoke tests against Azure.
 
-## 7. Legal / ethical guardrails (important)
+## 8. Legal / ethical guardrails (important)
 
-Automated CV ranking is regulated in many places. It is **high-risk under the EU AI Act**
-(Annex III, employment), GDPR Art. 22 restricts solely-automated decisions, and NYC Local
-Law 144 requires bias audits. The design therefore assumes:
-- **Decision support, not decision making:** the output is a ranked shortlist with evidence, and a human decides.
+Automated CV ranking is regulated. It is **high-risk under the EU AI Act** (Annex III,
+employment), GDPR Art. 22 restricts solely-automated decisions, and NYC Local Law 144
+requires bias audits. The design therefore assumes:
+- **Decision support, not decision making:** the output is a ranked shortlist with
+  evidence, with mandatory human review steps (built in via LangGraph interrupts).
 - Redaction before scoring, and personal characteristics only when evidenced and job-relevant.
-- Full explainability and an audit trail for every score.
-- Data minimisation and retention settings, plus a local-only mode (local LLM + embeddings).
+- Explainability: every score has quotes plus a Langfuse trace of exactly how it was produced.
+- Data minimisation: data stays in the Azure tenant, Langfuse is self-hosted, and retention is configurable.
 
-## 8. Milestones
+## 9. Milestones
 
 | # | Milestone | Deliverable |
 |---|---|---|
-| M0 | Scaffolding | `pyproject`, package skeleton, models, CI, synthetic fixtures |
-| M1 | Ingestion | PDF/DOCX/TXT readers, candidate grouping, generic form adapter |
-| M2 | Job profile | JD → editable `job.yaml` |
-| M3 | Extraction | CandidateProfile with source spans + caching |
-| M4 | Baseline scoring | Requirements gate, skills and experience scorers (embeddings + rules), weighted ranking, CSV output. **First usable end-to-end version.** |
-| M5 | LLM scoring | Achievements + personal-characteristics rubric scorers, redaction |
-| M6 | Reporting | HTML report with evidence drill-down, JSON, audit log |
-| M7 | Evaluation | Metrics harness, bias probes, consistency checks |
-| M8 | Extras | Pairwise top-K re-ranking, two-stage mode, specific form adapters, optional UI |
+| M0 | Scaffolding | `pyproject`, package skeleton, models, config, CI, synthetic fixtures |
+| M1 | Platform | Azure model factory (Entra ID + key), Langfuse tracing + masking, prompt registry |
+| M2 | Ingestion | Loaders, candidate grouping, generic form adapter |
+| M3 | Job profile | JobProfiler agent → `job.yaml` + HITL approval interrupt |
+| M4 | Extraction | CandidateProfile chain with source quotes, per-candidate vector store, cache |
+| M5 | Baseline graph | LangGraph end to end: baseline + rubric scorers, aggregation, CSV. **First usable version.** |
+| M6 | Agentic layer | Evidence agent + tools + quote validation; redaction |
+| M7 | Ranking agents | Pairwise judge, shortlist critic, review interrupt |
+| M8 | Reporting | HTML report with evidence and Langfuse links, JSON, audit info |
+| M9 | Evaluation | Langfuse datasets/experiments, bias probes, consistency checks |
+| M10 | Extras | Specific form adapters, Document Intelligence loader, review UI |
 
-## 9. Open questions
+## 10. Open questions
 
 1. **Volume & languages:** how many candidates per role, and are documents in languages other than English?
-2. **Data privacy:** is sending CVs to a cloud LLM API acceptable, or must everything run locally?
-3. **Application forms:** what produces them (an ATS, Google Forms, a custom web form)? Any samples?
-4. **Personal characteristics:** which traits matter, and should they affect the score or only be shown?
-5. **Output consumers:** recruiters (needs the HTML/Excel report) or another system (JSON/API)?
-6. **Ground truth:** are there past hiring decisions or recruiter rankings to evaluate against?
-7. **Knock-outs:** should failing a must-have exclude a candidate, or only flag and down-rank them?
+2. **Azure:** which model deployments are available in your Foundry project (e.g. `gpt-4.1`,
+   `gpt-4.1-mini`, `o4-mini`, `text-embedding-3-large`), and what are their TPM quotas? Entra ID or API keys?
+3. **Langfuse:** self-hosted or Langfuse Cloud (which region)?
+4. **Application forms:** what produces them (an ATS, Microsoft Forms, a custom web form)? Any samples?
+5. **Personal characteristics:** which traits matter, and should they affect the score or only be shown?
+6. **Review flow:** is the CLI with resume enough for the HITL steps, or do recruiters need a UI?
+7. **Ground truth:** are there past hiring decisions or recruiter rankings to evaluate against?
+8. **Knock-outs:** should failing a must-have exclude a candidate, or only flag and down-rank them?

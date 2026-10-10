@@ -1,0 +1,35 @@
+# Copy to cvscore.yaml (git-ignored) and fill in your Azure AI Foundry details.
+# Any value can be overridden by an environment variable, e.g.
+#   CVSCORE_AZURE__ENDPOINT=https://my-resource.openai.azure.com
+# Authentication is Entra ID (DefaultAzureCredential): `az login` locally,
+# managed identity in Azure. Your identity needs the "Cognitive Services OpenAI User"
+# role on the Azure OpenAI / AI Services resource.
+
+azure:
+  endpoint: https://<your-resource>.openai.azure.com
+  api_version: "2024-10-21"
+  models:
+    # Deployment names from your Foundry project. Roles you leave out reuse `scorer`.
+    extractor:
+      deployment: <cheap-fast-deployment>
+    scorer:
+      deployment: <main-deployment>
+    agent:
+      deployment: <tool-calling-deployment>
+    judge:
+      deployment: <strongest-deployment>
+      # For reasoning models, disable temperature and set an effort instead:
+      # temperature: null
+      # reasoning_effort: medium
+  embeddings:
+    deployment: <embedding-deployment>
+  max_concurrency: 8
+  max_retries: 6
+  timeout_s: 120
+
+langfuse:
+  enabled: true
+  # Keys come from LANGFUSE_PUBLIC_KEY / LANGFUSE_SECRET_KEY.
+  # host: https://langfuse.your-company.internal
+  environment: development
+  mask_pii: true

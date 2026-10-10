@@ -168,10 +168,11 @@ For each candidate, run in parallel with the LangGraph `Send` API and concurrenc
     `langchain-azure-ai`'s `AzureAIChatCompletionsModel` if you want the Foundry model
     inference endpoint, for example to use non-OpenAI models from the same catalogue.
   - **Embeddings:** `AzureOpenAIEmbeddings` (e.g. a `text-embedding-3-large` deployment).
-- **Auth:** **Entra ID** via `azure-identity` (`DefaultAzureCredential` +
-  `get_bearer_token_provider`) by default, with an API key as a fallback for local dev.
-  No secrets in code; settings come from `.env` / environment via `pydantic-settings`.
-- **Model roles**, each mapped to a deployment name in config:
+- **Auth:** **Entra ID only** (decided), via `azure-identity` (`DefaultAzureCredential` +
+  `get_bearer_token_provider`): `az login` locally, managed identity in Azure, or a
+  service principal through `AZURE_*` env vars. No API keys. Settings come from
+  `cvscore.yaml` plus `CVSCORE_*` env overrides via `pydantic-settings`.
+- **Model roles**, each mapped to a deployment name in `cvscore.yaml` (decided). Roles without their own deployment reuse the `scorer` deployment:
   - `extractor`: a cheaper or faster model, high volume
   - `scorer`
   - `agent`: tool calling
@@ -270,7 +271,7 @@ requires bias audits. The design therefore assumes:
 | # | Milestone | Deliverable |
 |---|---|---|
 | M0 | Scaffolding | `pyproject`, package skeleton, models, config, CI, synthetic fixtures |
-| M1 | Platform | Azure model factory (Entra ID + key), Langfuse tracing + masking, prompt registry |
+| M1 | Platform | Azure model factory (Entra ID), Langfuse tracing + masking, `cvscore doctor`; prompt registry moves to M3 |
 | M2 | Ingestion | Loaders, candidate grouping, generic form adapter |
 | M3 | Job profile | JobProfiler agent → `job.yaml` + HITL approval interrupt |
 | M4 | Extraction | CandidateProfile chain with source quotes, per-candidate vector store, cache |
@@ -284,8 +285,8 @@ requires bias audits. The design therefore assumes:
 ## 10. Open questions
 
 1. **Volume & languages:** how many candidates per role, and are documents in languages other than English?
-2. **Azure:** which model deployments are available in your Foundry project (e.g. `gpt-4.1`,
-   `gpt-4.1-mini`, `o4-mini`, `text-embedding-3-large`), and what are their TPM quotas? Entra ID or API keys?
+2. **Azure:** ~~Entra ID or API keys?~~ Entra ID; deployment names go in `cvscore.yaml`.
+   Still open: TPM quotas, to size concurrency.
 3. **Langfuse:** self-hosted or Langfuse Cloud (which region)?
 4. **Application forms:** what produces them (an ATS, Microsoft Forms, a custom web form)? Any samples?
 5. **Personal characteristics:** which traits matter, and should they affect the score or only be shown?

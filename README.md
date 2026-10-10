@@ -1,2 +1,50 @@
 # CV-score
-Tools to rank cvs 
+
+Tools to rank candidates' CVs, cover letters and application forms against a job
+description, with an evidence-backed, explainable score for each candidate.
+
+Built on LangChain / LangGraph, Azure OpenAI models in an Azure AI Foundry project
+(Entra ID auth), and Langfuse for tracing. See [`docs/PLAN.md`](docs/PLAN.md) for the design
+and roadmap.
+
+> Status: early development. The platform layer (config, Azure models, Langfuse tracing)
+> is in place; ingestion, scoring and ranking are next.
+
+## Setup
+
+```bash
+uv venv && uv pip install -e ".[dev]"   # or: python -m venv .venv && pip install -e ".[dev]"
+cp cvscore.example.yaml cvscore.yaml     # fill in endpoint + deployment names
+cp .env.example .env                     # Langfuse keys
+az login                                 # Entra ID for Azure OpenAI
+```
+
+Your identity needs the **Cognitive Services OpenAI User** role on the Azure resource
+behind your Foundry project.
+
+Check the setup:
+
+```bash
+cvscore doctor          # show resolved config
+cvscore doctor --live   # call each deployment and Langfuse
+```
+
+## Configuration
+
+`cvscore.yaml` maps each model role to a deployment in your Foundry project:
+
+| Role | Used for |
+|---|---|
+| `extractor` | High-volume structured extraction from documents |
+| `scorer` | Rubric scoring (default for roles you don't set) |
+| `agent` | Tool-calling agents |
+| `judge` | Pairwise comparison and shortlist review |
+
+Any value can be overridden by environment variables with the `CVSCORE_` prefix and `__`
+for nesting, e.g. `CVSCORE_AZURE__ENDPOINT`. Use `CVSCORE_CONFIG` to point at another file.
+
+## Development
+
+```bash
+ruff check . && ruff format --check . && mypy cvscore && pytest
+```

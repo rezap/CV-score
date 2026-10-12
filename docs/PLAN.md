@@ -286,12 +286,12 @@ requires bias audits. The design therefore assumes:
 | M0 | Scaffolding ✅ | `pyproject`, package skeleton, models, config, CI, synthetic fixtures |
 | M1 | Platform ✅ | Azure model factory (Entra ID), Langfuse tracing + masking, `cvscore doctor`; prompt registry moves to M3 |
 | M2 | Ingestion ✅ | PDF (column-aware), DOCX (text boxes, layout tables, headers), TXT/MD, .doc/.rtf/.odt via LibreOffice; candidate grouping; generic form adapters; `cvscore ingest` |
-| M3 | Job profile | JobProfiler agent → `job.yaml` + HITL approval interrupt |
-| M4 | Extraction | CandidateProfile chain with source quotes, per-candidate vector store, cache |
-| M5 | Baseline graph | LangGraph end to end: baseline + rubric scorers, aggregation, CSV. **First usable version.** |
+| M3 | Job profile ✅ (MVP) | `cvscore job draft` → editable `job.yaml` (structured-output chain; review = editing the YAML before `run`). Tool-using JobProfiler agent + LangGraph interrupt still to do |
+| M4 | Extraction ✅ | CandidateProfile with verified quotes, computed years of experience, on-disk LLM cache |
+| M5 | Baseline graph ✅ | LangGraph fan-out per candidate: redact → extract → rubric scoring (one call) → plain-Python ranking; `cvscore run`. Embedding-based scorers not built (lexical skill coverage instead) |
 | M6 | Agentic layer | Evidence agent + tools + quote validation; redaction |
 | M7 | Ranking agents | Pairwise judge, shortlist critic, review interrupt |
-| M8 | Reporting | HTML report with evidence and Langfuse links, JSON, audit info |
+| M8 | Reporting ✅ (MVP) | `report.html` (evidence per score, pseudonymous by default), `ranking.csv`, `results.json` |
 | M9 | Evaluation | Langfuse datasets/experiments, bias probes, consistency checks |
 | M10 | Extras | Specific form adapters, Document Intelligence loader, review UI |
 

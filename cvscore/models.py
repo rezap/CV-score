@@ -79,15 +79,43 @@ class JobProfile(BaseModel):
 # --- Candidate ---------------------------------------------------------------
 
 
+class BlockKind(StrEnum):
+    HEADING = "heading"
+    PARAGRAPH = "paragraph"
+    LIST_ITEM = "list_item"
+    TABLE_ROW = "table_row"
+
+
+class TextBlock(BaseModel):
+    """One unit of extracted text, in reading order."""
+
+    kind: BlockKind
+    text: str
+    page: int | None = Field(default=None, description="1-based page number (PDF only).")
+    section: str | None = Field(default=None, description="Nearest preceding heading.")
+    is_contact: bool = Field(
+        default=False,
+        description="From a header/footer or contact block; candidate for redaction.",
+    )
+
+
 class SourceDocument(BaseModel):
     doc_type: DocType
-    path: str
-    text: str
+    path: str = Field(description="Path relative to the candidates directory.")
+    sha256: str
+    text: str = Field(description="Normalised text as light markdown, in reading order.")
+    blocks: list[TextBlock] = Field(default_factory=list)
+    extractor: str = Field(description="Which extractor produced this, e.g. 'pdfplumber'.")
+    quality: float = Field(ge=0, le=1, description="Heuristic extraction quality.")
+    warnings: list[str] = Field(default_factory=list)
 
 
 class CandidateDocuments(BaseModel):
     candidate_id: str = Field(description="Pseudonymous ID; never the candidate's name.")
     documents: list[SourceDocument] = Field(default_factory=list)
+    errors: list[str] = Field(
+        default_factory=list, description="Files that could not be read, with the reason."
+    )
 
 
 class ExperienceEntry(BaseModel):

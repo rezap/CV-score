@@ -61,18 +61,31 @@ one free-roaming agent. The design is a **LangGraph state graph**:
 
 ## 3. Components
 
-### 3.1 Ingestion (`cvscore.ingest`)
-- **Formats:** use LangChain document loaders where they fit (`PyPDFLoader`,
-  `Docx2txtLoader`, `TextLoader`) and add our own metadata. An OCR fallback is optional.
-  Azure AI Document Intelligence (`AzureAIDocumentIntelligenceLoader`) is an option for
-  scanned or complex-layout CVs, since we're already on Azure.
-- **Grouping documents by candidate:** use one folder per candidate, or a `manifest.csv`
-  (`candidate_id, cv_path, cover_letter_path, form_path`).
-- **Application forms:** the structure is TBD, so they go through a pluggable
-  `FormAdapter` that maps fields to `{question, answer}` pairs. It starts with generic
-  JSON/YAML/CSV adapters and adds specific ones later.
-- Output: `CandidateDocuments`, a list of LangChain `Document`s per candidate with
-  `candidate_id`, `doc_type` and `page` metadata.
+### 3.1 Ingestion (`cvscore.ingest`) ✅
+- **Extractors (built):** `pdfplumber` for PDF and `python-docx` for DOCX, used directly
+  rather than through LangChain loaders, because those discard layout (column order,
+  headings, text boxes) that evidence quotes and section-aware scoring rely on.
+  - PDF: detects a gutter. With section headings on both sides (sidebar CV) it reads
+    column by column; otherwise (date or label column) row by row. It also re-joins wrapped
+    lines and end-of-line hyphenation, drops running headers/footers, recognises bullets
+    including unmapped `(cid:N)` and Symbol-font glyphs, and finds headings by font size or
+    section name.
+  - DOCX: body order including tables, heading/list styles, manual bullets after soft breaks,
+    text boxes (without Word's duplicate fallback copy), layout tables read cell by cell,
+    and headers/footers flagged as contact text.
+  - TXT/MD directly; `.doc`/`.rtf`/`.odt` converted with LibreOffice when installed.
+- **Output per document:** normalised markdown text, typed blocks (heading / paragraph /
+  list item / table row, with section, page and an `is_contact` flag for redaction), SHA-256,
+  a 0–1 quality score and warnings (scanned pages, broken font encoding, garbled text).
+- **Grouping documents by candidate:** one folder per candidate, flat files named
+  `<who>_cv.pdf`, or a `manifest.csv`. Document type comes from file-name keywords (EN/DE).
+  Folder names become pseudonymous IDs; the mapping is written separately.
+- **Application forms:** the structure is TBD, so they get generic adapters: JSON/YAML
+  mappings or question/answer lists, single-candidate CSV, and multi-candidate CSV exports
+  (`--forms --form-key`). Answers to personal-data questions are flagged as contact text.
+  Specific adapters (ATS exports) can come later.
+- **Not yet:** OCR for scanned PDFs. Azure AI Document Intelligence (`prebuilt-layout`) is
+  the planned fallback for documents the quality check flags.
 
 ### 3.2 Job profile: `JobProfiler` agent (`cvscore.job`)
 - A small ReAct-style agent with tools: `read_job_description`, `lookup_skill_taxonomy`
@@ -270,9 +283,9 @@ requires bias audits. The design therefore assumes:
 
 | # | Milestone | Deliverable |
 |---|---|---|
-| M0 | Scaffolding | `pyproject`, package skeleton, models, config, CI, synthetic fixtures |
-| M1 | Platform | Azure model factory (Entra ID), Langfuse tracing + masking, `cvscore doctor`; prompt registry moves to M3 |
-| M2 | Ingestion | Loaders, candidate grouping, generic form adapter |
+| M0 | Scaffolding ✅ | `pyproject`, package skeleton, models, config, CI, synthetic fixtures |
+| M1 | Platform ✅ | Azure model factory (Entra ID), Langfuse tracing + masking, `cvscore doctor`; prompt registry moves to M3 |
+| M2 | Ingestion ✅ | PDF (column-aware), DOCX (text boxes, layout tables, headers), TXT/MD, .doc/.rtf/.odt via LibreOffice; candidate grouping; generic form adapters; `cvscore ingest` |
 | M3 | Job profile | JobProfiler agent → `job.yaml` + HITL approval interrupt |
 | M4 | Extraction | CandidateProfile chain with source quotes, per-candidate vector store, cache |
 | M5 | Baseline graph | LangGraph end to end: baseline + rubric scorers, aggregation, CSV. **First usable version.** |

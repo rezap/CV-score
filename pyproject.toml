@@ -70,3 +70,4 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["."]  # lets tests import shared helpers as `tests.ingest.builders`
+markers = ["live: calls a real model API; opt-in with CVSCORE_LIVE=1 and OPENAI_API_KEY"]

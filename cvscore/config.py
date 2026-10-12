@@ -4,8 +4,9 @@ Precedence (highest first): explicit init kwargs, environment variables
 (``CVSCORE_`` prefix, ``__`` as the nesting delimiter, e.g.
 ``CVSCORE_AZURE__ENDPOINT``), the YAML file, then defaults.
 
-Secrets never live in the YAML file: Azure uses Entra ID, and Langfuse reads its
-keys from the standard ``LANGFUSE_PUBLIC_KEY`` / ``LANGFUSE_SECRET_KEY`` variables.
+Secrets never live in the YAML file: Azure uses Entra ID, OpenAI reads its key from
+``OPENAI_API_KEY``, and Langfuse reads its keys from the standard ``LANGFUSE_PUBLIC_KEY`` /
+``LANGFUSE_SECRET_KEY`` variables.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ from __future__ import annotations
 import os
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeVar
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import (
@@ -28,8 +29,13 @@ CONFIG_PATH_ENV = "CVSCORE_CONFIG"
 COGNITIVE_SERVICES_SCOPE = "https://cognitiveservices.azure.com/.default"
 
 
+class Provider(StrEnum):
+    AZURE = "azure"  # Azure OpenAI in an Azure AI Foundry project, Entra ID auth
+    OPENAI = "openai"  # OpenAI API (or a compatible endpoint), API key auth
+
+
 class ModelRole(StrEnum):
-    """What a chat model is used for. Each role maps to an Azure deployment."""
+    """What a chat model is used for. Each role maps to a deployment / model."""
 
     EXTRACTOR = "extractor"  # high-volume structured extraction
     SCORER = "scorer"  # rubric scoring
@@ -67,12 +73,51 @@ class AzureConfig(BaseModel):
 
     @model_validator(mode="after")
     def _roles_fall_back(self) -> AzureConfig:
-        """Roles without their own deployment reuse the scorer's (or any) deployment."""
-        if not self.models:
-            return self
-        default = self.models.get(ModelRole.SCORER) or next(iter(self.models.values()))
-        for role in ModelRole:
-            self.models.setdefault(role, default)
+        _fill_roles(self.models)
+        return self
+
+
+M = TypeVar("M")
+
+
+def _fill_roles(models: dict[ModelRole, M]) -> None:
+    """Roles without their own model reuse the scorer's (or any configured) model."""
+    if not models:
+        return
+    default = models.get(ModelRole.SCORER) or next(iter(models.values()))
+    for role in ModelRole:
+        models.setdefault(role, default)
+
+
+class OpenAIModelConfig(BaseModel):
+    model: str
+    temperature: float | None = 0.0
+    max_tokens: int | None = None
+    # Reasoning models reject `temperature`; set it to null for those.
+    reasoning_effort: str | None = None
+
+
+class OpenAIEmbeddingsConfig(BaseModel):
+    model: str
+    dimensions: int | None = None
+
+
+class OpenAIConfig(BaseModel):
+    """OpenAI API. The key is read from the environment variable named in ``api_key_env``
+    (``OPENAI_API_KEY`` by default), never from the config file."""
+
+    api_key_env: str = "OPENAI_API_KEY"
+    base_url: str | None = None  # for OpenAI-compatible endpoints or proxies
+    organization: str | None = None
+    models: dict[ModelRole, OpenAIModelConfig] = Field(default_factory=dict)
+    embeddings: OpenAIEmbeddingsConfig | None = None
+    timeout_s: float = 120.0
+    max_retries: int = 6
+    max_concurrency: int = 8
+
+    @model_validator(mode="after")
+    def _roles_fall_back(self) -> OpenAIConfig:
+        _fill_roles(self.models)
         return self
 
 
@@ -102,9 +147,19 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    provider: Provider = Provider.AZURE
     azure: AzureConfig = Field(default_factory=AzureConfig)
+    openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
     langfuse: LangfuseConfig = Field(default_factory=LangfuseConfig)
     ranking: RankingConfig = Field(default_factory=RankingConfig)
+
+    @property
+    def max_concurrency(self) -> int:
+        return (
+            self.openai.max_concurrency
+            if self.provider is Provider.OPENAI
+            else self.azure.max_concurrency
+        )
 
     @classmethod
     def settings_customise_sources(

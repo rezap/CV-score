@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
@@ -10,10 +11,10 @@ from typing import Annotated
 import typer
 from dotenv import find_dotenv, load_dotenv
 
-from cvscore.config import ModelRole, Settings, load_settings
+from cvscore.config import ModelRole, Provider, Settings, load_settings
 from cvscore.ingest import ExtractionError, extract_file, ingest, read_form_table
-from cvscore.llm import get_chat_model, get_embeddings
-from cvscore.llm.structured import LLMProvider, azure_provider
+from cvscore.llm import chat_model, embeddings_model
+from cvscore.llm.structured import LLMProvider, settings_provider
 from cvscore.models import DocType
 from cvscore.observability import Tracer
 
@@ -48,33 +49,50 @@ def main() -> None:
 def doctor(
     config: ConfigOption = None,
     live: Annotated[
-        bool, typer.Option(help="Call each Azure deployment and Langfuse to verify access.")
+        bool, typer.Option(help="Call each configured model and Langfuse to verify access.")
     ] = False,
 ) -> None:
-    """Check configuration, Entra ID access to Azure deployments, and Langfuse."""
+    """Check configuration, access to the configured models (Azure or OpenAI), and Langfuse."""
     settings = _load(config)
-    az = settings.azure
     ok = True
 
-    typer.echo(f"Azure endpoint: {az.endpoint or '(not set)'}  api_version: {az.api_version}")
-    for role in ModelRole:
-        model_cfg = az.models.get(role)
-        typer.echo(f"  {role:<10} -> {model_cfg.deployment if model_cfg else '(not set)'}")
-    typer.echo(f"  embeddings -> {az.embeddings.deployment if az.embeddings else '(not set)'}")
+    typer.echo(f"Provider: {settings.provider}")
+    if settings.provider is Provider.OPENAI:
+        oa = settings.openai
+        key_set = bool(os.environ.get(oa.api_key_env, "").strip())
+        typer.echo(
+            f"OpenAI base_url: {oa.base_url or '(default)'}  "
+            f"{oa.api_key_env}: {'set' if key_set else 'NOT SET'}"
+        )
+        if not key_set:
+            ok = False
+        for role in ModelRole:
+            m = oa.models.get(role)
+            typer.echo(f"  {role:<10} -> {m.model if m else '(not set)'}")
+        typer.echo(f"  embeddings -> {oa.embeddings.model if oa.embeddings else '(not set)'}")
+        has_embeddings = oa.embeddings is not None
+    else:
+        az = settings.azure
+        typer.echo(f"Azure endpoint: {az.endpoint or '(not set)'}  api_version: {az.api_version}")
+        for role in ModelRole:
+            d = az.models.get(role)
+            typer.echo(f"  {role:<10} -> {d.deployment if d else '(not set)'}")
+        typer.echo(f"  embeddings -> {az.embeddings.deployment if az.embeddings else '(not set)'}")
+        has_embeddings = az.embeddings is not None
 
     if live:
         tracer = Tracer.from_config(settings.langfuse)
         run_config = tracer.run_config(run_id="doctor", trace_name="cvscore-doctor")
         for role in ModelRole:
             try:
-                get_chat_model(role, az).invoke("Reply with the word OK.", config=run_config)
+                chat_model(role, settings).invoke("Reply with the word OK.", config=run_config)
                 typer.secho(f"  {role}: OK", fg="green")
             except Exception as e:  # noqa: BLE001 - report any failure
                 ok = False
                 typer.secho(f"  {role}: FAILED ({e})", fg="red")
-        if az.embeddings:
+        if has_embeddings:
             try:
-                get_embeddings(az).embed_query("ping")
+                embeddings_model(settings).embed_query("ping")
                 typer.secho("  embeddings: OK", fg="green")
             except Exception as e:  # noqa: BLE001
                 ok = False
@@ -159,7 +177,7 @@ def ingest_cmd(
 
 def llm_provider(settings: Settings, cache_dir: Path | None) -> LLMProvider:
     """The models used by `job draft` and `run` (tests replace this with fakes)."""
-    return azure_provider(settings, cache_dir=cache_dir)
+    return settings_provider(settings, cache_dir=cache_dir)
 
 
 @job_app.command("draft")
@@ -246,7 +264,7 @@ def run_cmd(
         run_id=run_id,
         trace_name="assess-candidates",
         tags=[f"job:{profile.id}"],
-        max_concurrency=settings.azure.max_concurrency,
+        max_concurrency=settings.max_concurrency,
     )
     typer.echo(f"Assessing {len(ingested.candidates)} candidates for '{profile.title}'...")
     state = build_graph(llm, settings.ranking).invoke(

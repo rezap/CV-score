@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 from cvscore.config import ModelRole, Settings, load_settings
 from cvscore.llm import get_chat_model, get_embeddings
@@ -33,7 +33,8 @@ def _load(config: Path | None) -> Settings:
 @app.callback()
 def main() -> None:
     """cvscore: explainable CV ranking."""
-    load_dotenv()
+    # Look for .env from the working directory, not from where the package is installed.
+    load_dotenv(find_dotenv(usecwd=True))
 
 
 @app.command()

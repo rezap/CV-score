@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Annotated
 
@@ -9,6 +10,7 @@ import typer
 from dotenv import find_dotenv, load_dotenv
 
 from cvscore.config import ModelRole, Settings, load_settings
+from cvscore.ingest import ExtractionError, ingest, read_form_table
 from cvscore.llm import get_chat_model, get_embeddings
 from cvscore.observability import Tracer
 
@@ -85,6 +87,69 @@ def doctor(
 
     if not ok:
         raise typer.Exit(1)
+
+
+@app.command("ingest")
+def ingest_cmd(
+    candidates: Annotated[
+        Path,
+        typer.Argument(
+            help="Folder with one sub-folder per candidate (or files named <who>_cv.pdf etc.).",
+            exists=True,
+            file_okay=False,
+        ),
+    ],
+    out: Annotated[Path, typer.Option("--out", "-o", help="Output folder.")] = Path("work"),
+    manifest: Annotated[
+        Path | None,
+        typer.Option(help="CSV with candidate, cv, cover_letter, form columns.", exists=True),
+    ] = None,
+    forms: Annotated[
+        Path | None,
+        typer.Option(help="Multi-candidate form export (CSV, one row each).", exists=True),
+    ] = None,
+    form_key: Annotated[
+        str | None,
+        typer.Option(help="Column in --forms matching the candidate folder name."),
+    ] = None,
+) -> None:
+    """Extract text from every candidate's documents into JSON files."""
+    if forms is not None and form_key is None:
+        typer.secho("--form-key is required with --forms.", fg="red", err=True)
+        raise typer.Exit(2)
+    try:
+        form_table = read_form_table(forms, form_key) if forms and form_key else None
+        result = ingest(candidates, manifest=manifest, form_table=form_table, form_table_path=forms)
+    except (ExtractionError, ValueError) as e:
+        typer.secho(str(e), fg="red", err=True)
+        raise typer.Exit(2) from e
+
+    docs_dir = out / "candidates"
+    docs_dir.mkdir(parents=True, exist_ok=True)
+    for cand in result.candidates:
+        (docs_dir / f"{cand.candidate_id}.json").write_text(
+            cand.model_dump_json(indent=2), encoding="utf-8"
+        )
+    # Maps pseudonymous IDs back to folder names, which usually identify people.
+    (out / "identity_map.json").write_text(
+        json.dumps(result.identity, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    problems = 0
+    for cand in result.candidates:
+        kinds = ", ".join(f"{d.doc_type}({d.quality:.1f})" for d in cand.documents) or "-"
+        typer.echo(f"{cand.candidate_id}  {kinds}")
+        for d in cand.documents:
+            for w in d.warnings:
+                problems += 1
+                typer.secho(f"    ! {d.path}: {w}", fg="yellow")
+        for err in cand.errors:
+            problems += 1
+            typer.secho(f"    x {err}", fg="red")
+    typer.echo(
+        f"\n{len(result.candidates)} candidates -> {docs_dir} "
+        f"({problems} warnings/errors). identity_map.json contains real names: keep it private."
+    )
 
 
 if __name__ == "__main__":

@@ -7,8 +7,8 @@ Built on LangChain / LangGraph, Azure OpenAI models in an Azure AI Foundry proje
 (Entra ID auth), and Langfuse for tracing. See [`docs/PLAN.md`](docs/PLAN.md) for the design
 and roadmap.
 
-> Status: early development. The platform layer (config, Azure models, Langfuse tracing)
-> is in place; ingestion, scoring and ranking are next.
+> Status: early development. Config, Azure models, Langfuse tracing and document ingestion
+> are in place; structured extraction, scoring and ranking are next.
 
 ## Setup
 
@@ -50,6 +50,38 @@ Check the setup:
 cvscore doctor          # show resolved config
 cvscore doctor --live   # call each deployment and Langfuse
 ```
+
+## Reading candidate documents
+
+Put each candidate's files in their own folder:
+
+```
+candidates/
+  Jane Doe/        cv.pdf  cover_letter.docx  form.json
+  Sam Roe/         resume.docx
+```
+
+```bash
+cvscore ingest candidates/ --out work/
+```
+
+This writes one JSON file per candidate to `work/candidates/`, named by a pseudonymous ID
+(`c-…`), with the text, its structure (headings, list items, sections, pages), a quality
+score, and warnings, e.g. for scanned PDFs. `work/identity_map.json` maps IDs back to folder
+names. Treat the whole `work/` folder as personal data: the JSON files still hold the full
+document text, with contact details flagged (`is_contact`) but not yet removed. Redaction
+before scoring comes in a later milestone.
+
+- **Formats:** PDF, DOCX, TXT/MD; `.doc`, `.rtf` and `.odt` if LibreOffice is installed.
+  Scanned PDFs (no text layer) are flagged, not OCR'd.
+- **Document type** comes from the file name (`cv`, `resume`, `lebenslauf`, `cover_letter`,
+  `anschreiben`, `form`, ...). A single unnamed document in a folder is taken as the CV.
+- **Other layouts:** files directly in `candidates/` named `<who>_cv.pdf`,
+  `<who>_cover_letter.docx`; or `--manifest manifest.csv` with `candidate,cv,cover_letter,form`
+  columns.
+- **Application forms:** JSON/YAML (`{"question": "answer"}` or a list of
+  `{question, answer}`) or CSV in the candidate's folder, or one export for everyone with
+  `--forms export.csv --form-key <column matching the folder name>`.
 
 ## Configuration
 

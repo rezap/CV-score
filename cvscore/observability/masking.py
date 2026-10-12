@@ -7,27 +7,15 @@ URLs to personal profiles) wherever they appear in a trace payload.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
-_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    (re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+"), "[EMAIL]"),
-    (
-        re.compile(
-            r"https?://(?:www\.)?(?:linkedin\.com|github\.com|xing\.com)/[^\s\"'<>)]+", re.I
-        ),
-        "[PROFILE_URL]",
-    ),
-    # International or local phone numbers: 8+ digits, optional +, spaces, dots,
-    # dashes and parentheses between them.
-    (re.compile(r"(?<![\w/])\+?\d(?:[\s().-]*\d){7,}(?![\w/])"), "[PHONE]"),
-]
+from cvscore.pii import EMAIL_RE, PHONE_CANDIDATE_RE, PROFILE_URL_RE, is_phone
 
 
 def mask_text(text: str) -> str:
-    for pattern, replacement in _PATTERNS:
-        text = pattern.sub(replacement, text)
-    return text
+    text = EMAIL_RE.sub("[EMAIL]", text)
+    text = PROFILE_URL_RE.sub("[PROFILE_URL]", text)
+    return PHONE_CANDIDATE_RE.sub(lambda m: "[PHONE]" if is_phone(m.group()) else m.group(), text)
 
 
 def mask_pii(*, data: Any, **_: Any) -> Any:

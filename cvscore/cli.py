@@ -115,7 +115,8 @@ def ingest_cmd(
 ) -> None:
     """Extract text from every candidate's documents into JSON files."""
     if forms is not None and form_key is None:
-        raise typer.BadParameter("--form-key is required with --forms.")
+        typer.secho("--form-key is required with --forms.", fg="red", err=True)
+        raise typer.Exit(2)
     try:
         form_table = read_form_table(forms, form_key) if forms and form_key else None
         result = ingest(candidates, manifest=manifest, form_table=form_table, form_table_path=forms)

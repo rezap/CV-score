@@ -6,8 +6,8 @@ import re
 import unicodedata
 
 # Characters CV templates use as bullets. "o" is only a bullet when followed by a space.
-# U+E000–U+F8FF: Symbol/Wingdings glyphs, e.g. Word's default bullet exported to PDF (U+F0B7).
-_BULLET_RE = re.compile(r"^\s*(?:[•●○◦▪▫■□►▶➢➤✓✔→·*‣⁃–—\-\ue000-\uf8ff]|o(?=\s))\s+")
+# U+E000-U+F8FF: Symbol/Wingdings glyphs, e.g. Word's default bullet exported to PDF (U+F0B7).
+_BULLET_RE = re.compile(r"^\s*(?:[•●○◦▪▫■□►▶➢➤✓✔→·*‣⁃\u2013\u2014\-\ue000-\uf8ff]|o(?=\s))\s+")
 _WS_RE = re.compile(r"[ \t\u00a0\u2000-\u200b\u202f\u205f\u3000]+")
 _ZERO_WIDTH_RE = re.compile(r"[\u200c\u200d\u2060\ufeff\u00ad]")  # incl. soft hyphen
 

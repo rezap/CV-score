@@ -91,7 +91,7 @@ def mark_contact_area(blocks: list[TextBlock], *, top_of_cv: bool) -> None:
 def quality_score(
     text: str, pages: int | None = None, *, check_length: bool = True
 ) -> tuple[float, list[str]]:
-    """Heuristic 0–1 score for how cleanly text was extracted, plus warnings."""
+    """Heuristic 0-1 score for how cleanly text was extracted, plus warnings."""
     warnings: list[str] = []
     score = 1.0
     chars = len(text.strip())

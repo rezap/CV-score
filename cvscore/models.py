@@ -26,6 +26,7 @@ class Evidence(BaseModel):
     doc_type: DocType
     quote: str = Field(description="Exact text copied from the document, not paraphrased.")
     location: str | None = Field(default=None, description="Page, section or form question.")
+    label: str | None = Field(default=None, description="What the quote shows, e.g. a trait.")
 
 
 # --- Job ---------------------------------------------------------------------
@@ -122,7 +123,8 @@ class ExperienceEntry(BaseModel):
     title: str
     organisation: str | None = None
     start: date | None = None
-    end: date | None = Field(default=None, description="None if this is the current role.")
+    end: date | None = Field(default=None, description="None if current or not stated.")
+    is_current: bool = False
     seniority: str | None = None
     domain: str | None = None
     responsibilities: list[str] = Field(default_factory=list)
@@ -156,6 +158,12 @@ class CandidateProfile(BaseModel):
     certifications: list[str] = Field(default_factory=list)
     languages: list[str] = Field(default_factory=list)
     trait_evidence: list[Evidence] = Field(default_factory=list)
+    years_experience: float | None = Field(
+        default=None, description="Total years in dated roles, overlaps counted once."
+    )
+    dropped_quotes: int = Field(
+        default=0, description="Model quotes not found in the documents and discarded."
+    )
 
 
 # --- Scoring -----------------------------------------------------------------
@@ -169,6 +177,8 @@ class RequirementStatus(StrEnum):
 
 class RequirementCheck(BaseModel):
     requirement_id: str
+    description: str = ""
+    must_have: bool = True
     status: RequirementStatus
     rationale: str
     evidence: list[Evidence] = Field(default_factory=list)
@@ -180,6 +190,14 @@ class DimensionScore(BaseModel):
         ge=0, le=1, description="None means insufficient evidence (treated as neutral)."
     )
     confidence: float = Field(ge=0, le=1)
+    rationale: str
+    evidence: list[Evidence] = Field(default_factory=list)
+
+
+class TraitScore(BaseModel):
+    trait_id: str
+    name: str
+    score: float | None = Field(ge=0, le=1, description="None means insufficient evidence.")
     rationale: str
     evidence: list[Evidence] = Field(default_factory=list)
 
@@ -196,7 +214,16 @@ class ScoreCard(BaseModel):
     job_id: str
     requirement_checks: list[RequirementCheck] = Field(default_factory=list)
     scores: list[DimensionScore] = Field(default_factory=list)
+    trait_scores: list[TraitScore] = Field(default_factory=list)
+    features: dict[str, float | None] = Field(
+        default_factory=dict, description="Deterministic facts, e.g. years of experience."
+    )
     total: float | None = None
+    rank: int | None = None
     flags: list[Flag] = Field(default_factory=list)
+    notes: list[str] = Field(default_factory=list, description="Why flags were raised, etc.")
     trace_id: str | None = None
     prompt_versions: dict[str, str] = Field(default_factory=dict)
+
+    def score(self, dimension: Dimension) -> DimensionScore | None:
+        return next((s for s in self.scores if s.dimension is dimension), None)

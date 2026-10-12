@@ -13,7 +13,7 @@ from __future__ import annotations
 import os
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import (
@@ -87,6 +87,14 @@ class LangfuseConfig(BaseModel):
     mask_pii: bool = True
 
 
+class RankingConfig(BaseModel):
+    # "flag": candidates failing a must-have are ranked last but keep their score.
+    # "exclude": they get no total score (still listed, for a person to overrule).
+    knockout: Literal["flag", "exclude"] = "flag"
+    low_confidence: float = 0.5  # dimension confidence below this raises a flag
+    max_dropped_quotes: int = 3  # this many unverifiable model quotes raises a flag
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="CVSCORE_",
@@ -96,6 +104,7 @@ class Settings(BaseSettings):
 
     azure: AzureConfig = Field(default_factory=AzureConfig)
     langfuse: LangfuseConfig = Field(default_factory=LangfuseConfig)
+    ranking: RankingConfig = Field(default_factory=RankingConfig)
 
     @classmethod
     def settings_customise_sources(

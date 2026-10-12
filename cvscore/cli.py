@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
 
@@ -10,11 +11,15 @@ import typer
 from dotenv import find_dotenv, load_dotenv
 
 from cvscore.config import ModelRole, Settings, load_settings
-from cvscore.ingest import ExtractionError, ingest, read_form_table
+from cvscore.ingest import ExtractionError, extract_file, ingest, read_form_table
 from cvscore.llm import get_chat_model, get_embeddings
+from cvscore.llm.structured import LLMProvider, azure_provider
+from cvscore.models import DocType
 from cvscore.observability import Tracer
 
 app = typer.Typer(help="Rank candidate CVs against a job description.", no_args_is_help=True)
+job_app = typer.Typer(help="Create and inspect job profiles.", no_args_is_help=True)
+app.add_typer(job_app, name="job")
 
 ConfigOption = Annotated[
     Path | None,
@@ -149,6 +154,122 @@ def ingest_cmd(
     typer.echo(
         f"\n{len(result.candidates)} candidates -> {docs_dir} "
         f"({problems} warnings/errors). identity_map.json contains real names: keep it private."
+    )
+
+
+def llm_provider(settings: Settings, cache_dir: Path | None) -> LLMProvider:
+    """The models used by `job draft` and `run` (tests replace this with fakes)."""
+    return azure_provider(settings, cache_dir=cache_dir)
+
+
+@job_app.command("draft")
+def job_draft(
+    ad: Annotated[Path, typer.Argument(help="Job ad (PDF, DOCX, TXT or MD).", exists=True)],
+    out: Annotated[Path, typer.Option("--out", "-o", help="YAML file to write.")] = Path(
+        "job.yaml"
+    ),
+    config: ConfigOption = None,
+) -> None:
+    """Draft a job profile from a job ad. Review and edit it before `cvscore run`."""
+    from cvscore.job import draft_job_profile, save_job_profile
+
+    settings = _load(config)
+    try:
+        doc = extract_file(ad, doc_type=DocType.OTHER, display_path=ad.name)
+    except ExtractionError as e:
+        typer.secho(f"Cannot read {ad}: {e}", fg="red", err=True)
+        raise typer.Exit(2) from e
+    tracer = Tracer.from_config(settings.langfuse)
+    run_config = tracer.run_config(run_id=f"job-draft-{_timestamp()}", trace_name="job-draft")
+    profile = draft_job_profile(doc.text, llm_provider(settings, None), run_config)
+    tracer.flush()
+    save_job_profile(profile, out)
+    typer.echo(
+        f"Wrote {out}: {len(profile.must_have)} must-haves, {len(profile.nice_to_have)} "
+        f"nice-to-haves, {len(profile.key_skills)} key skills, {len(profile.traits)} traits.\n"
+        "Review and edit it, then run: cvscore run --job "
+        f"{out} --candidates <folder>"
+    )
+
+
+def _timestamp() -> str:
+    return datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+
+
+@app.command("run")
+def run_cmd(
+    job: Annotated[
+        Path, typer.Option(help="Job profile YAML (from `cvscore job draft`).", exists=True)
+    ],
+    candidates: Annotated[
+        Path, typer.Option(help="Candidates folder.", exists=True, file_okay=False)
+    ],
+    out: Annotated[Path, typer.Option("--out", "-o", help="Output folder.")] = Path("out"),
+    manifest: Annotated[Path | None, typer.Option(exists=True)] = None,
+    forms: Annotated[Path | None, typer.Option(exists=True)] = None,
+    form_key: Annotated[str | None, typer.Option()] = None,
+    reveal_names: Annotated[
+        bool,
+        typer.Option(help="Show folder names in the report instead of pseudonymous IDs."),
+    ] = False,
+    cache: Annotated[
+        bool, typer.Option(help="Reuse model results from earlier runs (out/.cache).")
+    ] = True,
+    config: ConfigOption = None,
+) -> None:
+    """Assess and rank every candidate against the job profile; write the report."""
+    from cvscore.graph import build_graph
+    from cvscore.job import load_job_profile
+    from cvscore.report import write_report
+
+    settings = _load(config)
+    if forms is not None and form_key is None:
+        typer.secho("--form-key is required with --forms.", fg="red", err=True)
+        raise typer.Exit(2)
+    try:
+        profile = load_job_profile(job)
+        form_table = read_form_table(forms, form_key) if forms and form_key else None
+        ingested = ingest(
+            candidates, manifest=manifest, form_table=form_table, form_table_path=forms
+        )
+    except (ExtractionError, ValueError) as e:
+        typer.secho(str(e), fg="red", err=True)
+        raise typer.Exit(2) from e
+    if not ingested.candidates:
+        typer.secho(f"No candidates found in {candidates}.", fg="red", err=True)
+        raise typer.Exit(2)
+
+    llm = llm_provider(settings, out / ".cache" if cache else None)
+    tracer = Tracer.from_config(settings.langfuse)
+    run_id = f"{profile.id}-{_timestamp()}"
+    run_config = tracer.run_config(
+        run_id=run_id,
+        trace_name="assess-candidates",
+        tags=[f"job:{profile.id}"],
+        max_concurrency=settings.azure.max_concurrency,
+    )
+    typer.echo(f"Assessing {len(ingested.candidates)} candidates for '{profile.title}'...")
+    state = build_graph(llm, settings.ranking).invoke(
+        {"job": profile, "candidates": ingested.candidates, "identity": ingested.identity},
+        config=run_config,
+    )
+    tracer.flush()
+    ranked = state.get("ranked", [])
+    profiles = [a["profile"] for a in state.get("assessments", [])]
+    names = ingested.identity if reveal_names else None
+    write_report(out, profile, ranked, profiles, names)
+    (out / "identity_map.json").write_text(
+        json.dumps(ingested.identity, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+
+    for card in ranked:
+        label = names.get(card.candidate_id, card.candidate_id) if names else card.candidate_id
+        total = "n/a" if card.total is None else f"{round(card.total * 100)}"
+        flags = f"  [{', '.join(card.flags)}]" if card.flags else ""
+        typer.echo(f"{card.rank:>3}. {label:<30} {total:>4}{flags}")
+    typer.echo(
+        f"\nReport: {out / 'report.html'} (also ranking.csv, results.json). "
+        f"Run id: {run_id}. Treat {out}/ as personal data."
     )
 
 

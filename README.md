@@ -12,8 +12,30 @@ and roadmap.
 
 ## Setup
 
+Requires Python 3.11+.
+
+**With [uv](https://docs.astral.sh/uv/) (recommended):**
+
 ```bash
-uv venv && uv pip install -e ".[dev]"   # or: python -m venv .venv && pip install -e ".[dev]"
+uv sync                 # creates .venv and installs the package + dev tools
+uv run pytest           # run the tests
+```
+
+**With pip:**
+
+```bash
+python -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
+pytest
+```
+
+The tests need no Azure or Langfuse access, and they ignore any `cvscore.yaml`, `.env`,
+or `CVSCORE_*` / `LANGFUSE_*` / `AZURE_*` variables on your machine.
+
+To use the tool against your own services:
+
+```bash
 cp cvscore.example.yaml cvscore.yaml     # fill in endpoint + deployment names
 cp .env.example .env                     # Langfuse keys
 az login                                 # Entra ID for Azure OpenAI
@@ -44,6 +66,8 @@ Any value can be overridden by environment variables with the `CVSCORE_` prefix 
 for nesting, e.g. `CVSCORE_AZURE__ENDPOINT`. Use `CVSCORE_CONFIG` to point at another file.
 
 ## Development
+
+The same checks CI runs (prefix each with `uv run` if you use uv):
 
 ```bash
 ruff check . && ruff format --check . && mypy cvscore && pytest

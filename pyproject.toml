@@ -19,6 +19,16 @@ dependencies = [
     "typer>=0.12",
 ]
 
+# Dev tools are declared twice: as a dependency group so `uv run pytest` / `uv sync` pick
+# them up by default, and as an extra for `pip install -e ".[dev]"`. Keep the lists in sync.
+[dependency-groups]
+dev = [
+    "mypy>=1.10",
+    "pytest>=8.0",
+    "ruff>=0.6",
+    "types-pyyaml",
+]
+
 [project.optional-dependencies]
 dev = [
     "mypy>=1.10",

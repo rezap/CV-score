@@ -7,13 +7,16 @@ from cvscore.observability import Tracer, mask_pii, mask_text
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("Contact jane.doe+cv@example.co.uk now", "Contact [EMAIL] now"),
-        ("Call +49 (0)30 1234-5678.", "Call [PHONE]."),
-        ("Tel: 020 7946 0958", "Tel: [PHONE]"),
-        ("See https://www.linkedin.com/in/jane-doe", "See [PROFILE_URL]"),
+        ("Contact jane.doe+cv@example.co.uk now", "Contact [REDACTED: email] now"),
+        ("Call +49 (0)30 1234-5678.", "Call [REDACTED: phone]."),
+        ("Tel: 020 7946 0958", "Tel: [REDACTED: phone]"),
+        ("See https://www.linkedin.com/in/jane-doe", "See [REDACTED: profile URL]"),
         ("Led a team of 12 from 2019 to 2023, revenue +35%", None),
         ("Data Engineer, Acme, 2016 - 2019", None),  # date ranges are not phone numbers
-        ("Oslo \uf0e0 me@x.no \uf095 98 76 54 32", "Oslo \uf0e0 [EMAIL] \uf095 [PHONE]"),
+        (
+            "Oslo \uf0e0 me@x.no \uf095 98 76 54 32",
+            "Oslo \uf0e0 [REDACTED: email] \uf095 [REDACTED: phone]",
+        ),
         ("Engineer, 01.2019 - 05.2021", None),
     ],
 )
@@ -23,7 +26,7 @@ def test_mask_text(text: str, expected: str | None) -> None:
 
 def test_mask_pii_recurses() -> None:
     data = {"input": ["a@b.com", ("x", 1)], "n": 3}
-    assert mask_pii(data=data) == {"input": ["[EMAIL]", ("x", 1)], "n": 3}
+    assert mask_pii(data=data) == {"input": ["[REDACTED: email]", ("x", 1)], "n": 3}
 
 
 def test_disabled_tracer_has_no_callbacks() -> None:

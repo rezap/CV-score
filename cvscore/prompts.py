@@ -8,7 +8,7 @@ from __future__ import annotations
 
 PROMPT_VERSIONS = {
     "job_profile": "1",
-    "candidate_profile": "1",
+    "candidate_profile": "2",
     "scoring": "1",
 }
 
@@ -31,8 +31,8 @@ disability, marital status or appearance, even if the ad mentions them.
 
 CANDIDATE_PROFILE_SYSTEM = """\
 You extract a structured, factual profile from a candidate's documents (CV, cover letter, \
-application form). Personal details have been removed and replaced by placeholders such \
-as [CANDIDATE] or [EMAIL]; ignore them.
+application form). Personal details have been removed and replaced by markers such as \
+[REDACTED: name] or [REDACTED: email]; ignore them.
 
 Rules:
 - Extract only what the documents state. Do not infer or embellish.

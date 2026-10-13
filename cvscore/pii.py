@@ -6,12 +6,20 @@ import re
 
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 PROFILE_URL_RE = re.compile(
-    r"https?://(?:www\.)?(?:linkedin\.com|github\.com|xing\.com)/[^\s\"'<>)]+", re.I
+    r"(?<![\w.])(?:https?://)?(?:www\.)?(?:linkedin\.com|github\.com|xing\.com)/"
+    r"[^\s\"'<>)]*[^\s\"'<>).,;:]",
+    re.I,
 )
 # Candidate phone numbers: digits with optional +, spaces, dots, dashes, parentheses between.
 # Filtered by ``is_phone`` so dates like "2016 - 2019" or "01.2019 - 05.2021" are kept.
 PHONE_CANDIDATE_RE = re.compile(r"(?<![\w/])\+?\(?\d(?:[\s().-]*\d){7,}(?![\w/])")
 _YEAR_RE = re.compile(r"(?:19|20)\d\d")
+REDACTED_RE = re.compile(r"\[REDACTED(?:: [^\]]+)?\]")
+
+
+def redacted(what: str) -> str:
+    """The marker that replaces removed personal data, e.g. ``[REDACTED: email]``."""
+    return f"[REDACTED: {what}]"
 
 
 def is_phone(candidate: str) -> bool:

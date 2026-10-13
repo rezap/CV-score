@@ -65,8 +65,8 @@ def test_discover_flat_folder(tmp_path: Path) -> None:
         (tmp_path / name).write_bytes(b"")
     sources = {s.label: sorted(f.path.name for f in s.files) for s in discover_folder(tmp_path)}
     assert sources == {
-        "jane_doe": ["jane_doe_cover_letter.docx", "jane_doe_cv.pdf"],
-        "sam": ["sam-resume.pdf"],
+        "Jane Doe": ["jane_doe_cover_letter.docx", "jane_doe_cv.pdf"],
+        "Sam": ["sam-resume.pdf"],
     }
 
 

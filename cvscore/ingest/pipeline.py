@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -9,6 +10,7 @@ from cvscore.ingest.discovery import (
     CandidateSource,
     discover_folder,
     discover_manifest,
+    relative_display,
 )
 from cvscore.ingest.document import ExtractionError
 from cvscore.ingest.forms import FORM_SUFFIXES, FormAnswer, extract_form, form_document
@@ -40,16 +42,25 @@ def extract_file(path: Path, *, doc_type: DocType, display_path: str) -> SourceD
 @dataclass
 class IngestResult:
     candidates: list[CandidateDocuments]
-    # candidate_id -> folder name / manifest label. Usually identifies the person: keep it
+    # candidate_id -> folder name / detected name. Usually identifies the person: keep it
     # out of anything sent to models or traces.
     identity: dict[str, str] = field(default_factory=dict)
+    # candidate_id -> every name seen for the candidate, used to redact them.
+    names: dict[str, list[str]] = field(default_factory=dict)
+    sources: list[CandidateSource] = field(default_factory=list)
 
 
-def _display(path: Path, root: Path) -> str:
-    try:
-        return path.resolve().relative_to(root.resolve()).as_posix()
-    except ValueError:
-        return path.name
+def _extract(path: Path, doc_type: DocType, display_path: str) -> SourceDocument:
+    return extract_file(path, doc_type=doc_type, display_path=display_path)
+
+
+def _read_manifest_files(source: CandidateSource, base: Path) -> None:
+    for f in source.files:
+        f.display_path = relative_display(f.path, base)
+        try:
+            f.document = extract_file(f.path, doc_type=f.doc_type, display_path=f.display_path)
+        except ExtractionError as e:
+            f.error = str(e)
 
 
 def ingest(
@@ -58,28 +69,32 @@ def ingest(
     manifest: Path | None = None,
     form_table: dict[str, list[FormAnswer]] | None = None,
     form_table_path: Path | None = None,
+    overrides: dict[str, DocType] | None = None,
+    exclude: Iterable[str] = (),
 ) -> IngestResult:
-    sources: list[CandidateSource] = (
-        discover_manifest(manifest) if manifest else discover_folder(root)
-    )
-    base = manifest.parent if manifest else root
-    result = IngestResult(candidates=[])
+    """Read and group every candidate's documents (see ``discovery`` for the layouts)."""
+    if manifest:
+        sources = discover_manifest(manifest)
+        for source in sources:
+            _read_manifest_files(source, manifest.parent)
+    else:
+        sources = discover_folder(root, _extract, overrides=overrides, exclude=exclude)
+    result = IngestResult(candidates=[], sources=sources)
     for source in sources:
         cid = source.candidate_id
         if cid in result.identity:
             raise ValueError(f"Two candidates share the label '{source.label}'.")
         result.identity[cid] = source.label
+        result.names[cid] = list(source.names)
         cand = CandidateDocuments(candidate_id=cid)
         for f in source.files:
-            display = _display(f.path, base)
-            try:
-                cand.documents.append(
-                    extract_file(f.path, doc_type=f.doc_type, display_path=display)
-                )
-            except ExtractionError as e:
-                cand.errors.append(f"{display}: {e}")
+            if f.document is not None:
+                cand.documents.append(f.document)
+            else:
+                cand.errors.append(f"{f.display_path}: {f.error}")
         if form_table is not None and form_table_path is not None:
-            answers = form_table.get(source.label)
+            keys = [source.label, source.folder, *source.names]
+            answers = next((form_table[k] for k in keys if k and k in form_table), None)
             if answers:
                 cand.documents.append(
                     form_document(

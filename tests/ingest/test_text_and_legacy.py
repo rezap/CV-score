@@ -20,6 +20,9 @@ def test_normalize_text() -> None:
         ("o Spark", (True, "Spark")),
         ("➢ Airflow", (True, "Airflow")),
         ("\uf0b7 dbt", (True, "dbt")),  # Word's Symbol-font bullet in exported PDFs
+        ("\u2022Developed models", (True, "Developed models")),  # no space after the bullet
+        ("* Spark", (True, "Spark")),
+        ("*Note", (False, "*Note")),
         ("-5% churn", (False, "-5% churn")),
         ("Oracle DBA", (False, "Oracle DBA")),
     ],

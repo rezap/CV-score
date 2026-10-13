@@ -13,6 +13,8 @@ from cvscore.observability import Tracer, mask_pii, mask_text
         ("See https://www.linkedin.com/in/jane-doe", "See [PROFILE_URL]"),
         ("Led a team of 12 from 2019 to 2023, revenue +35%", None),
         ("Data Engineer, Acme, 2016 - 2019", None),  # date ranges are not phone numbers
+        ("Oslo \uf0e0 me@x.no \uf095 98 76 54 32", "Oslo \uf0e0 [EMAIL] \uf095 [PHONE]"),
+        ("Engineer, 01.2019 - 05.2021", None),
     ],
 )
 def test_mask_text(text: str, expected: str | None) -> None:

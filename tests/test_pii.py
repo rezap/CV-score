@@ -26,3 +26,17 @@ def test_find_phones_and_contact_details() -> None:
     assert has_contact_details("jane@example.com")
     assert has_contact_details("linkedin.com/in/x and www.example.org")
     assert not has_contact_details("Senior Engineer, Acme Ltd, 2016 - 2019")
+
+
+@pytest.mark.parametrize(
+    ("text", "phone"),
+    [
+        ("98 76 54 32", True),  # Norwegian mobile: 8 digits
+        ("+47 98 76 54 32", True),
+        ("01.2019 - 05.2021", False),  # month.year date range
+        ("01.01.2020", False),
+        ("2019 - 05.2021", False),
+    ],
+)
+def test_is_phone_nordic_numbers_and_dates(text: str, phone: bool) -> None:
+    assert is_phone(text) is phone

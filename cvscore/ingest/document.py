@@ -69,8 +69,9 @@ def mark_contact_area(blocks: list[TextBlock], *, top_of_cv: bool) -> None:
     """Flag identity and contact details for later redaction.
 
     Anywhere: short lines that contain an email, phone number or profile URL.
-    CVs only: name-like lines before the first section heading ("Experience", "Profile", ...),
-    which is where the candidate's name and headline sit.
+    CVs only, before the first section heading ("Experience", "Profile", ...), where the
+    name, headline and contact line sit: name-like lines, and any line with contact details
+    however long (e.g. "Oslo · name@mail.com · 98 76 54 32 · linkedin-handle").
     """
     for b in blocks:
         if (
@@ -84,7 +85,7 @@ def mark_contact_area(blocks: list[TextBlock], *, top_of_cv: bool) -> None:
     for b in blocks:
         if b.kind is BlockKind.HEADING and is_section_keyword(b.text):
             break
-        if _name_like(b.text):
+        if _name_like(b.text) or has_contact_details(b.text):
             b.is_contact = True
 
 

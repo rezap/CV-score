@@ -9,18 +9,21 @@ PROFILE_URL_RE = re.compile(
     r"https?://(?:www\.)?(?:linkedin\.com|github\.com|xing\.com)/[^\s\"'<>)]+", re.I
 )
 # Candidate phone numbers: digits with optional +, spaces, dots, dashes, parentheses between.
-# Filtered by ``is_phone`` so date ranges like "2016 - 2019" are not mistaken for phones.
+# Filtered by ``is_phone`` so dates like "2016 - 2019" or "01.2019 - 05.2021" are kept.
 PHONE_CANDIDATE_RE = re.compile(r"(?<![\w/])\+?\(?\d(?:[\s().-]*\d){7,}(?![\w/])")
 _YEAR_RE = re.compile(r"(?:19|20)\d\d")
 
 
 def is_phone(candidate: str) -> bool:
+    """8-15 digits (Norwegian and Danish numbers have 8) that do not read as a date."""
     digits = re.sub(r"\D", "", candidate)
-    if not 9 <= len(digits) <= 15:
+    if not 8 <= len(digits) <= 15:
         return False
     groups = re.findall(r"\d+", candidate)
-    # "2016 - 2019 - 2021", "2019-2024": only years, not a phone number.
-    return not all(_YEAR_RE.fullmatch(g) for g in groups)
+    # A year plus only 1-2 digit groups (months, days) is a date or a date range:
+    # "2016 - 2019", "01.2019 - 05.2021", "01.01.2020".
+    has_year = any(_YEAR_RE.fullmatch(g) for g in groups)
+    return not (has_year and all(_YEAR_RE.fullmatch(g) or len(g) <= 2 for g in groups))
 
 
 def find_phones(text: str) -> list[re.Match[str]]:

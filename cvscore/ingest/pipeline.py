@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from cvscore.ingest.discovery import (
+    OCR,
     CandidateSource,
     discover_folder,
     discover_manifest,
@@ -15,6 +16,7 @@ from cvscore.ingest.discovery import (
 from cvscore.ingest.document import ExtractionError
 from cvscore.ingest.forms import FORM_SUFFIXES, FormAnswer, extract_form, form_document
 from cvscore.ingest.legacy import LEGACY_SUFFIXES, extract_legacy
+from cvscore.ingest.ocr import IMAGE_SUFFIXES, image_document
 from cvscore.ingest.pdf import extract_pdf
 from cvscore.ingest.plaintext import extract_text_file
 from cvscore.ingest.word import extract_docx
@@ -36,6 +38,8 @@ def extract_file(path: Path, *, doc_type: DocType, display_path: str) -> SourceD
         return extract_legacy(path, doc_type=doc_type, display_path=display_path)
     if suffix in FORM_SUFFIXES:
         return extract_form(path, display_path=display_path)
+    if suffix in IMAGE_SUFFIXES:
+        return image_document(path, doc_type=doc_type, display_path=display_path)
     raise ExtractionError(f"Unsupported file type: {suffix or '(none)'}")
 
 
@@ -54,13 +58,15 @@ def _extract(path: Path, doc_type: DocType, display_path: str) -> SourceDocument
     return extract_file(path, doc_type=doc_type, display_path=display_path)
 
 
-def _read_manifest_files(source: CandidateSource, base: Path) -> None:
+def _read_manifest_files(source: CandidateSource, base: Path, ocr: OCR | None) -> None:
     for f in source.files:
         f.display_path = relative_display(f.path, base)
         try:
             f.document = extract_file(f.path, doc_type=f.doc_type, display_path=f.display_path)
         except ExtractionError as e:
             f.error = str(e)
+        if f.document is not None and ocr is not None:
+            f.document = ocr(f.path, f.document)
 
 
 def ingest(
@@ -71,14 +77,15 @@ def ingest(
     form_table_path: Path | None = None,
     overrides: dict[str, DocType] | None = None,
     exclude: Iterable[str] = (),
+    ocr: OCR | None = None,
 ) -> IngestResult:
     """Read and group every candidate's documents (see ``discovery`` for the layouts)."""
     if manifest:
         sources = discover_manifest(manifest)
         for source in sources:
-            _read_manifest_files(source, manifest.parent)
+            _read_manifest_files(source, manifest.parent, ocr)
     else:
-        sources = discover_folder(root, _extract, overrides=overrides, exclude=exclude)
+        sources = discover_folder(root, _extract, overrides=overrides, exclude=exclude, ocr=ocr)
     result = IngestResult(candidates=[], sources=sources)
     for source in sources:
         cid = source.candidate_id

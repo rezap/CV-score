@@ -107,9 +107,21 @@ cvscore ingest applications/ --out work/
   candidate. A folder holding one person's documents is one candidate; a folder named after
   a person is never merged with another person's folder. Two CVs that disagree on name and
   email are never merged.
-- **Formats:** PDF, DOCX, TXT/MD; `.doc`, `.rtf` and `.odt` if LibreOffice is installed.
-  Scanned PDFs (no text layer) and PDFs whose text was turned into outlines are flagged,
-  not OCR'd. Password-protected, damaged or mislabelled files get a message saying so.
+- **Formats:** PDF, DOCX, TXT/MD; `.doc`, `.rtf` and `.odt` if LibreOffice is installed;
+  images (PNG, JPEG, TIFF, ...) whose file name says they are a CV, letter or form
+  (`Jane_CV.jpg`; other pictures, such as portraits, are ignored). Password-protected,
+  damaged or mislabelled files get a message saying so.
+- **Scanned CVs (OCR):** as a fallback, PDF pages without a text layer (scans, text turned
+  into outlines), pages with only a little text over a large image (a scan with a stamped
+  page number), documents with almost no text, and image files are read by your configured
+  model, which must accept images (e.g. gpt-4.1,
+  gpt-4o, gpt-5). The page image is rendered locally and sent to the model of the `ocr.role`
+  deployment; the transcript is then read, grouped and redacted like any other text.
+  This is the one model call that sees personal data, since an image can't be redacted
+  before it is read: it is never traced to Langfuse, and results are cached so each page
+  is read once. OCR'd documents carry a warning to check
+  names and numbers against the original. Switch it off with `ocr.enabled: false` or
+  `--no-ocr`.
 - **When a file is read badly:** `cvscore inspect cv.pdf` shows what was read: the
   document type and why, the name found, a quality score, warnings, and the text block by
   block (`--redacted` shows it as the models see it).

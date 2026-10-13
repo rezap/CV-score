@@ -414,3 +414,100 @@ def password_pdf(path: Path) -> Path:
     c.showPage()
     c.save()
     return path
+
+
+def scanned_cv_image(path: Path) -> Path:
+    """A photo/scan of a CV page as an image file (PNG or JPEG by suffix)."""
+    from PIL import ImageDraw
+
+    img = Image.new("RGB", (850, 1100), "white")
+    draw = ImageDraw.Draw(img)
+    for i, line in enumerate(["Kari Nordmann", "Experience", "Data Scientist, Equinor"]):
+        draw.text((60, 60 + i * 40), line, fill="black")
+    img.save(path)
+    return path
+
+
+def text_then_scan_pdf(path: Path) -> Path:
+    """Page 1 has a text layer; page 2 is a scanned image (e.g. a scanned diploma page)."""
+    c = Canvas(str(path), pagesize=A4)
+    _lines(
+        c,
+        60,
+        PAGE_H - 80,
+        [
+            ("Kari Nordmann", "Helvetica-Bold", 18),
+            ("Experience", "Helvetica-Bold", 13),
+            (
+                "Senior Data Scientist, Equinor, 2019 - present. Built forecasting models for",
+                "Helvetica",
+                10,
+            ),
+            ("offshore platforms and led a team of four engineers.", "Helvetica", 10),
+            (
+                "Data Analyst, Statkraft, 2015 - 2019. Automated reporting with Python and SQL.",
+                "Helvetica",
+                10,
+            ),
+            ("Education", "Helvetica-Bold", 13),
+            ("MSc Statistics, NTNU, 2013 - 2015", "Helvetica", 10),
+        ],
+    )
+    c.showPage()
+    c.drawImage(ImageReader(Image.new("RGB", (200, 280), "white")), 50, 300, 400, 500)
+    c.showPage()
+    c.save()
+    return path
+
+
+def readable_scan_pdf(path: Path, lines: list[str]) -> Path:
+    """A scanned CV: the page is one image of printed text, with no text layer."""
+    from PIL import ImageDraw, ImageFont
+
+    img = Image.new("RGB", (1240, 1754), "white")  # A4 at 150 dpi
+    draw = ImageDraw.Draw(img)
+    y = 120
+    for line in lines:
+        heading = line.isupper()
+        font = ImageFont.load_default(size=40 if heading else 28)
+        if line:
+            draw.text((120, y), line, fill="black", font=font)
+        y += 60 if heading else 44
+    c = Canvas(str(path), pagesize=A4)
+    c.drawImage(ImageReader(img), 0, 0, PAGE_W, PAGE_H)
+    c.showPage()
+    c.save()
+    return path
+
+
+def scan_with_text_footer_pdf(path: Path) -> Path:
+    """Page 1 has text; page 2 is a full-page scan with a real-text page number on top."""
+    text_then_scan_pdf(path)
+    c = Canvas(str(path), pagesize=A4)
+    _lines(
+        c,
+        60,
+        PAGE_H - 80,
+        [
+            ("Kari Nordmann", "Helvetica-Bold", 18),
+            ("Experience", "Helvetica-Bold", 13),
+            (
+                "Senior Data Scientist, Equinor, 2019 - present. Built forecasting models for",
+                "Helvetica",
+                10,
+            ),
+            ("offshore platforms and led a team of four engineers.", "Helvetica", 10),
+            (
+                "Data Analyst, Statkraft, 2015 - 2019. Automated reporting with Python and SQL.",
+                "Helvetica",
+                10,
+            ),
+        ],
+    )
+    c.showPage()
+    c.drawImage(ImageReader(Image.new("RGB", (200, 280), "white")), 0, 0, PAGE_W, PAGE_H)
+    c.setFont("Helvetica", 8)
+    c.drawString(PAGE_W / 2, 20, "Page 2 of 2")
+    c.showPage()
+    c.save()
+    return path

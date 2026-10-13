@@ -14,6 +14,7 @@ from typer.testing import CliRunner
 from cvscore import cli
 from cvscore.config import Settings
 from cvscore.extract import CandidateProfileDraft
+from cvscore.ingest.ocr import PageTranscript
 from cvscore.job import JobProfileDraft
 from cvscore.llm.structured import CachedLLM, LLMProvider
 from cvscore.score import ScoringDraft
@@ -110,6 +111,7 @@ def fake(monkeypatch: pytest.MonkeyPatch) -> FakeLLM:
             JobProfileDraft: job_handler,
             CandidateProfileDraft: profile_handler,
             ScoringDraft: scoring_handler,
+            PageTranscript: lambda _: {"text": ""},  # the scan is a blank image
         }
     )
 

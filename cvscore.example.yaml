@@ -55,6 +55,15 @@ langfuse:
   environment: development
   mask_pii: true
 
+ocr:
+  # Scanned CVs (PDF pages without text) and image files named as a CV/letter are read by
+  # the vision model of this role. It sees the page before redaction; these calls are
+  # never traced. Results are cached, so each page is read once.
+  enabled: true
+  role: extractor
+  dpi: 150
+  max_pages: 6
+
 ranking:
   knockout: flag          # flag | exclude: what happens when a must-have is clearly not met
   low_confidence: 0.5     # flag scores whose confidence is below this

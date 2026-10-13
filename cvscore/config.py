@@ -140,6 +140,18 @@ class RankingConfig(BaseModel):
     max_dropped_quotes: int = 3  # this many unverifiable model quotes raises a flag
 
 
+class OCRConfig(BaseModel):
+    """Reading scanned CVs (PDF pages without text, image files) with a vision model.
+
+    The model sees the page image before redaction, so these calls are never traced.
+    """
+
+    enabled: bool = True
+    role: ModelRole = ModelRole.EXTRACTOR  # whose deployment reads the pages
+    dpi: int = 150
+    max_pages: int = 6  # per document
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="CVSCORE_",
@@ -152,6 +164,7 @@ class Settings(BaseSettings):
     openai: OpenAIConfig = Field(default_factory=OpenAIConfig)
     langfuse: LangfuseConfig = Field(default_factory=LangfuseConfig)
     ranking: RankingConfig = Field(default_factory=RankingConfig)
+    ocr: OCRConfig = Field(default_factory=OCRConfig)
 
     @property
     def max_concurrency(self) -> int:

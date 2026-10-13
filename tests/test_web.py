@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 from cvscore.config import Settings
 from cvscore.extract import CandidateProfileDraft
+from cvscore.ingest.ocr import PageTranscript
 from cvscore.job import JobProfileDraft
 from cvscore.llm.structured import LLMProvider
 from cvscore.score import ScoringDraft
@@ -26,6 +27,7 @@ def fake() -> FakeLLM:
             JobProfileDraft: job_handler,
             CandidateProfileDraft: profile_handler,
             ScoringDraft: scoring_handler,
+            PageTranscript: lambda _: {"text": ""},  # the test scan is a blank page
         }
     )
 
@@ -178,3 +180,16 @@ def test_run_outside_root_is_refused(client: TestClient, root: Path) -> None:
     profile = client.post("/api/job", data={"text": JOB_AD}).json()["profile"]
     response = client.post("/api/runs", json={"folder": "/", "job": profile})
     assert response.status_code == 403
+
+
+def test_scan_reads_scanned_cvs_with_ocr(client: TestClient, root: Path, fake: FakeLLM) -> None:
+    fake.handlers[PageTranscript] = lambda _: {
+        "text": "Sam Roe\nsam.roe@example.com\n\n## Experience\n"
+        "- Data Engineer, Initech, 2018 - 2024"
+    }
+    result = client.post("/api/scan", json={"folder": str(root)}).json()
+    [sam] = [c for c in result["candidates"] if c["label"] == "Sam Roe"]
+    [cv] = sam["files"]
+    assert cv["doc_type"] == "cv" and cv["names"] == ["Sam Roe"]
+    assert any(w.startswith("Read by OCR") for w in cv["warnings"])
+    assert any(schema is PageTranscript for _, schema, _ in fake.calls)

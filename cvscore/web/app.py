@@ -32,7 +32,13 @@ from pydantic import BaseModel, ValidationError
 
 from cvscore.config import ModelRole, Provider, Settings, load_settings
 from cvscore.ingest import ExtractionError, extract_file
-from cvscore.ingest.discovery import SUPPORTED_SUFFIXES, discover_folder, is_candidate_file
+from cvscore.ingest.discovery import (
+    OCR,
+    SUPPORTED_SUFFIXES,
+    discover_folder,
+    is_candidate_file,
+)
+from cvscore.ingest.ocr import ocr_hook
 from cvscore.job import draft_job_profile
 from cvscore.llm.structured import LLMProvider, settings_provider
 from cvscore.models import DocType, JobProfile
@@ -99,6 +105,15 @@ def create_app(
             raise HTTPException(400, f"Configuration problem: {e}") from e
 
     runs = RunManager(runs_dir, settings, provider)
+
+    def scan_ocr() -> OCR | None:
+        """OCR while scanning, so scanned CVs are grouped by the name in them. Results are
+        cached with the runs', so the run that follows doesn't read the pages again."""
+        try:
+            s = load_settings(config)
+        except (FileNotFoundError, ValidationError, ValueError):
+            return None
+        return ocr_hook(provider(s, runs_dir / ".cache"), s.ocr)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -183,7 +198,9 @@ def create_app(
     @app.post("/api/scan")
     def scan(request: ScanRequest) -> ScanResult:
         folder = inside_root(request.folder)
-        sources = discover_folder(folder, overrides=request.overrides, exclude=request.exclude)
+        sources = discover_folder(
+            folder, overrides=request.overrides, exclude=request.exclude, ocr=scan_ocr()
+        )
         return ScanResult(folder=str(folder), candidates=[summarize(s) for s in sources])
 
     @app.post("/api/job")

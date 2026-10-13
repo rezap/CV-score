@@ -13,6 +13,8 @@ from dotenv import find_dotenv, load_dotenv
 
 from cvscore.config import ModelRole, Provider, Settings, load_settings
 from cvscore.ingest import ExtractionError, extract_file, ingest, read_form_table
+from cvscore.ingest.discovery import OCR
+from cvscore.ingest.ocr import ocr_hook
 from cvscore.llm import chat_model, embeddings_model
 from cvscore.llm.structured import LLMProvider, settings_provider
 from cvscore.models import DocType, SourceDocument
@@ -28,6 +30,27 @@ ConfigOption = Annotated[
         "--config", "-c", help="Config YAML (default: $CVSCORE_CONFIG or ./cvscore.yaml)."
     ),
 ]
+
+
+OcrOption = Annotated[
+    bool,
+    typer.Option(
+        "--ocr/--no-ocr",
+        help="Read scanned pages and image files with the vision model (see ocr in the config).",
+    ),
+]
+
+
+def _ocr_hook(config: Path | None, cache_dir: Path | None, enabled: bool) -> OCR | None:
+    """The OCR step, or None (with a note) when it is off or the config can't be loaded."""
+    if not enabled:
+        return None
+    try:
+        settings = load_settings(config)
+    except (FileNotFoundError, ValueError) as e:
+        typer.secho(f"OCR is off (no usable config: {e}).", fg="yellow", err=True)
+        return None
+    return ocr_hook(llm_provider(settings, cache_dir), settings.ocr)
 
 
 def _load(config: Path | None) -> Settings:
@@ -138,6 +161,8 @@ def ingest_cmd(
         str | None,
         typer.Option(help="Column in --forms matching the candidate folder name."),
     ] = None,
+    ocr: OcrOption = True,
+    config: ConfigOption = None,
 ) -> None:
     """Extract text from every candidate's documents into JSON files."""
     if forms is not None and form_key is None:
@@ -145,7 +170,13 @@ def ingest_cmd(
         raise typer.Exit(2)
     try:
         form_table = read_form_table(forms, form_key) if forms and form_key else None
-        result = ingest(candidates, manifest=manifest, form_table=form_table, form_table_path=forms)
+        result = ingest(
+            candidates,
+            manifest=manifest,
+            form_table=form_table,
+            form_table_path=forms,
+            ocr=_ocr_hook(config, out / ".cache", ocr),
+        )
     except (ExtractionError, ValueError) as e:
         typer.secho(str(e), fg="red", err=True)
         raise typer.Exit(2) from e
@@ -187,6 +218,8 @@ def inspect(
     redacted: Annotated[
         bool, typer.Option(help="Show the text as the models would see it (redacted).")
     ] = False,
+    ocr: OcrOption = True,
+    config: ConfigOption = None,
 ) -> None:
     """Show what is read from documents: type, name, quality, warnings and the text.
 
@@ -199,8 +232,9 @@ def inspect(
     def ex(path: Path, doc_type: DocType, display: str) -> SourceDocument:
         return extract_file(path, doc_type=doc_type, display_path=display)
 
+    hook = _ocr_hook(config, None, ocr)
     for path in files:
-        f = read_file(path, path.parent, ex)
+        f = read_file(path, path.parent, ex, ocr=hook)
         typer.secho(f"\n== {path.name}", bold=True)
         if f.document is None:
             typer.secho(f"   cannot read: {f.error}", fg="red")
@@ -278,6 +312,7 @@ def run_cmd(
     cache: Annotated[
         bool, typer.Option(help="Reuse model results from earlier runs (out/.cache).")
     ] = True,
+    ocr: OcrOption = True,
     config: ConfigOption = None,
 ) -> None:
     """Assess and rank every candidate against the job profile; write the report."""
@@ -287,11 +322,16 @@ def run_cmd(
     if forms is not None and form_key is None:
         typer.secho("--form-key is required with --forms.", fg="red", err=True)
         raise typer.Exit(2)
+    llm = llm_provider(settings, out / ".cache" if cache else None)
     try:
         profile = load_job_profile(job)
         form_table = read_form_table(forms, form_key) if forms and form_key else None
         ingested = ingest(
-            candidates, manifest=manifest, form_table=form_table, form_table_path=forms
+            candidates,
+            manifest=manifest,
+            form_table=form_table,
+            form_table_path=forms,
+            ocr=ocr_hook(llm, settings.ocr) if ocr else None,
         )
     except (ExtractionError, ValueError) as e:
         typer.secho(str(e), fg="red", err=True)
@@ -302,7 +342,6 @@ def run_cmd(
 
     from cvscore.service import assess_all, write_outputs
 
-    llm = llm_provider(settings, out / ".cache" if cache else None)
     typer.echo(f"Assessing {len(ingested.candidates)} candidates for '{profile.title}'...")
     outcome = assess_all(profile, ingested, llm, settings)
     write_outputs(out, profile, ingested, outcome, reveal_names=reveal_names)

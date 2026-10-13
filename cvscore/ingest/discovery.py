@@ -40,12 +40,15 @@ from cvscore.ingest.identify import (
     type_from_filename,
 )
 from cvscore.ingest.legacy import LEGACY_SUFFIXES
+from cvscore.ingest.ocr import IMAGE_SUFFIXES
 from cvscore.models import DocType, SourceDocument
 
 DOCUMENT_SUFFIXES = frozenset({".pdf", ".docx", ".txt", ".md"}) | LEGACY_SUFFIXES
-SUPPORTED_SUFFIXES = DOCUMENT_SUFFIXES | FORM_SUFFIXES
+SUPPORTED_SUFFIXES = DOCUMENT_SUFFIXES | FORM_SUFFIXES | IMAGE_SUFFIXES
 
 Extractor = Callable[[Path, DocType, str], SourceDocument]
+# Adds OCR text to an extracted document that has pages without text (see ``ocr``).
+OCR = Callable[[Path, SourceDocument], SourceDocument]
 
 
 @dataclass
@@ -89,6 +92,10 @@ def classify(path: Path) -> DocType | None:
 
 def is_candidate_file(path: Path) -> bool:
     name = path.name
+    if path.suffix.lower() in IMAGE_SUFFIXES and type_from_filename(path) in (None, DocType.OTHER):
+        # Only images named as a CV, letter or form ("Jane_CV.jpg"): a folder often holds
+        # portrait photos, which should not be sent to a model.
+        return False
     return (
         path.is_file()
         and path.suffix.lower() in SUPPORTED_SUFFIXES
@@ -111,15 +118,22 @@ def set_doc_type(doc: SourceDocument, doc_type: DocType) -> None:
 
 
 def read_file(
-    path: Path, root: Path, extract: Extractor, override: DocType | None = None
+    path: Path,
+    root: Path,
+    extract: Extractor,
+    override: DocType | None = None,
+    ocr: OCR | None = None,
 ) -> CandidateFile:
-    """Extract one file and work out its type, names and emails."""
+    """Extract one file (with OCR for pages without text) and work out its type, names
+    and emails."""
     display = relative_display(path, root)
     f = CandidateFile(path=path, doc_type=DocType.OTHER, display_path=display)
     try:
         f.document = extract(path, DocType.OTHER, display)
     except ExtractionError as e:
         f.error = str(e)
+    if f.document is not None and ocr is not None:
+        f.document = ocr(path, f.document)
     if override is not None:
         f.doc_type, f.type_reason = override, "set by user"
     else:
@@ -330,6 +344,7 @@ def discover_folder(
     *,
     overrides: dict[str, DocType] | None = None,
     exclude: Iterable[str] = (),
+    ocr: OCR | None = None,
 ) -> list[CandidateSource]:
     """Read every supported file under ``root`` and group the files into candidates.
 
@@ -351,7 +366,7 @@ def discover_folder(
         display = relative_display(path, root)
         if display in skip:
             continue
-        files[path] = read_file(path, root, extract, overrides.get(display))
+        files[path] = read_file(path, root, extract, overrides.get(display), ocr)
     groups = _merge_all(_units(root, files, root))
     sources = sorted((_finish(g) for g in groups), key=lambda s: s.label.lower())
     _unique_labels(sources)

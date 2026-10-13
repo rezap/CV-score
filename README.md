@@ -111,8 +111,10 @@ cvscore ingest applications/ --out work/
   images (PNG, JPEG, TIFF, ...) whose file name says they are a CV, letter or form
   (`Jane_CV.jpg`; other pictures, such as portraits, are ignored). Password-protected,
   damaged or mislabelled files get a message saying so.
-- **Scanned CVs (OCR):** pages without a text layer (scans, text turned into outlines) and
-  image files are read by your configured model, which must accept images (e.g. gpt-4.1,
+- **Scanned CVs (OCR):** as a fallback, PDF pages without a text layer (scans, text turned
+  into outlines), pages with only a little text over a large image (a scan with a stamped
+  page number), documents with almost no text, and image files are read by your configured
+  model, which must accept images (e.g. gpt-4.1,
   gpt-4o, gpt-5). The page image is rendered locally and sent to the model of the `ocr.role`
   deployment; the transcript is then read, grouped and redacted like any other text.
   This is the one model call that sees personal data, since an image can't be redacted

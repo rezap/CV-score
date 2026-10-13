@@ -33,7 +33,8 @@ MAX_IMAGE_SIDE = 2000  # pixels; enough for small print, keeps requests small
 # Reads one page image (PNG bytes) and returns its text as light markdown.
 PageReader = Callable[[bytes], str]
 
-_NO_TEXT_PAGE_RE = re.compile(r"^Page (\d+) has no text")
+# The PDF extractor's warnings for pages without (enough) text: these get OCR.
+_NO_TEXT_PAGE_RE = re.compile(r"^Page (\d+) has (?:no|little) text")
 
 OCR_SYSTEM = """\
 You transcribe one page of a job application (CV, cover letter or form) from an image.

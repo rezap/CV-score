@@ -181,3 +181,14 @@ def test_llm_page_reader_sends_the_image_untraced() -> None:
 def test_ocr_can_be_switched_off() -> None:
     assert ocr_hook(lambda role: RecordingLLM(), OCRConfig(enabled=False)) is None
     assert PageTranscript(text="x").text == "x"
+
+
+def test_scanned_page_with_a_little_real_text_is_read(tmp_path: Path) -> None:
+    path = builders.scan_with_text_footer_pdf(tmp_path / "cv.pdf")
+    doc = extract(path)
+    assert any(w.startswith("Page 2 has little text and a large image") for w in doc.warnings)
+    reader = Reader("## Certificates\nAzure AI Engineer Associate")
+    doc = with_ocr(doc, path, reader, OCRConfig())
+    assert len(reader.pages) == 1  # only page 2
+    assert "Senior Data Scientist" in doc.text and "Azure AI Engineer Associate" in doc.text
+    assert "Page 2 of 2" not in doc.text  # the page's own text is replaced by the transcript

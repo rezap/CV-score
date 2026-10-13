@@ -478,3 +478,36 @@ def readable_scan_pdf(path: Path, lines: list[str]) -> Path:
     c.showPage()
     c.save()
     return path
+
+
+def scan_with_text_footer_pdf(path: Path) -> Path:
+    """Page 1 has text; page 2 is a full-page scan with a real-text page number on top."""
+    text_then_scan_pdf(path)
+    c = Canvas(str(path), pagesize=A4)
+    _lines(
+        c,
+        60,
+        PAGE_H - 80,
+        [
+            ("Kari Nordmann", "Helvetica-Bold", 18),
+            ("Experience", "Helvetica-Bold", 13),
+            (
+                "Senior Data Scientist, Equinor, 2019 - present. Built forecasting models for",
+                "Helvetica",
+                10,
+            ),
+            ("offshore platforms and led a team of four engineers.", "Helvetica", 10),
+            (
+                "Data Analyst, Statkraft, 2015 - 2019. Automated reporting with Python and SQL.",
+                "Helvetica",
+                10,
+            ),
+        ],
+    )
+    c.showPage()
+    c.drawImage(ImageReader(Image.new("RGB", (200, 280), "white")), 0, 0, PAGE_W, PAGE_H)
+    c.setFont("Helvetica", 8)
+    c.drawString(PAGE_W / 2, 20, "Page 2 of 2")
+    c.showPage()
+    c.save()
+    return path

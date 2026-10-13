@@ -48,6 +48,8 @@ LINE_TOLERANCE = 3.0  # points; words whose tops differ less than this share a l
 # tolerance in points merges words in small or tightly justified text (LaTeX PDFs have
 # no space characters, only gaps).
 WORD_GAP_RATIO = 0.08
+# A page with less text than this and a large image is taken for a scan (sent to OCR).
+SCAN_PAGE_MAX_CHARS = 100
 GUTTER_MIN_WIDTH = 10.0  # points
 MARGIN_FRACTION = 0.08  # top/bottom share of the page searched for running headers/footers
 
@@ -330,6 +332,15 @@ def _running_lines(pages_lines: list[list[_Line]], heights: list[float]) -> set[
     return {t for t, n in counts.items() if n >= threshold}
 
 
+def _image_share(page: Any) -> float:
+    """Share of the page covered by images (overlaps counted twice; enough to spot a scan)."""
+    area = sum(
+        max(0.0, float(im["x1"] - im["x0"])) * max(0.0, float(im["bottom"] - im["top"]))
+        for im in page.images
+    )
+    return area / max(1.0, float(page.width * page.height))
+
+
 def _not_icon(obj: dict[str, Any]) -> bool:
     return obj.get("object_type") != "char" or not _ICON_FONT_RE.search(obj.get("fontname", ""))
 
@@ -379,8 +390,13 @@ def extract_pdf(path: Path, *, doc_type: DocType, display_path: str) -> SourceDo
             except Exception as e:  # noqa: BLE001 - one damaged page shouldn't lose the rest
                 warnings.append(f"Page {i} could not be read ({type(e).__name__}).")
                 words = []
+            chars = sum(len(w["text"]) for w in words)
             if not words and page.images:
                 warnings.append(f"Page {i} has no text layer (scanned image?).")
+            elif chars < SCAN_PAGE_MAX_CHARS and _image_share(page) >= 0.3:
+                # A scan with a little real text on top, e.g. a page number or a header
+                # stamped by a PDF tool.
+                warnings.append(f"Page {i} has little text and a large image (scanned page?).")
             elif not words and (page.curves or page.rects):
                 warnings.append(
                     f"Page {i} has no text, only drawn shapes: the text may have been converted "

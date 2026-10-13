@@ -23,11 +23,31 @@ from typing import Any
 import pdfplumber
 
 from cvscore.ingest.document import ExtractionError, build_document
-from cvscore.ingest.text_utils import is_section_keyword, join_lines, normalize_text, strip_bullet
+from cvscore.ingest.text_utils import (
+    is_section_keyword,
+    join_lines,
+    normalize_text,
+    strip_bullet,
+    tidy_heading,
+)
 from cvscore.models import BlockKind, DocType, SourceDocument, TextBlock
 
 _GLYPH_BULLET_RE = re.compile(r"^\(cid:\d+\)\s*")  # bullet glyph without a unicode mapping
+# Icon fonts (envelope, phone, GitHub logo, ...): their glyphs decode to "(cid:N)" or to
+# stray letters, so their characters are dropped. Symbol and Wingdings are kept: Word draws
+# list bullets with them.
+_ICON_FONT_RE = re.compile(
+    r"awesome|simpleicons|academicons|marvosym|fontello|materialicons|material-?symbols|"
+    r"ionicons|icomoon|bootstrap-?icons|tabler|feather|phosphor|remixicon|lineicons|"
+    r"glyphicons|octicons|devicon|typicons|entypo|socicon",
+    re.I,
+)
 LINE_TOLERANCE = 3.0  # points; words whose tops differ less than this share a line
+# Gap between letters, as a share of the font size, above which they are separate words.
+# Letters of a word sit at most ~0.04 em apart and word gaps start around 0.1 em; a fixed
+# tolerance in points merges words in small or tightly justified text (LaTeX PDFs have
+# no space characters, only gaps).
+WORD_GAP_RATIO = 0.08
 GUTTER_MIN_WIDTH = 10.0  # points
 MARGIN_FRACTION = 0.08  # top/bottom share of the page searched for running headers/footers
 
@@ -55,6 +75,39 @@ class _Line:
         return float(statistics.median(w["size"] for w in self.words))
 
 
+def _join_letter_spaced(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Join runs of 3+ single letters ("E X P E R I E N C E", tracked headings) into a word."""
+    out: list[dict[str, Any]] = []
+    run: list[dict[str, Any]] = []
+
+    def flush() -> None:
+        if len(run) >= 3:
+            # A clearly wider gap between letters is a word space: "A B O U T   M E".
+            gaps = [b["x0"] - a["x1"] for a, b in zip(run, run[1:], strict=False)]
+            letter_gap = min(gaps)
+            text = run[0]["text"]
+            for gap, w in zip(gaps, run[1:], strict=True):
+                text += (" " if gap > letter_gap * 1.6 + 0.1 * w["size"] else "") + w["text"]
+            out.append({**run[0], "text": text, "x1": run[-1]["x1"]})
+        else:
+            out.extend(run)
+        run.clear()
+
+    for w in words:
+        single = len(w["text"]) == 1 and w["text"].isalpha()
+        close = run and w["x0"] - run[-1]["x1"] < 1.5 * w["size"]
+        if single and (not run or close):
+            run.append(w)
+            continue
+        flush()
+        if single:
+            run.append(w)
+        else:
+            out.append(w)
+    flush()
+    return out
+
+
 def _group_lines(words: list[dict[str, Any]]) -> list[_Line]:
     lines: list[_Line] = []
     for w in sorted(words, key=lambda w: (round(w["top"]), w["x0"])):
@@ -67,6 +120,7 @@ def _group_lines(words: list[dict[str, Any]]) -> list[_Line]:
             lines.append(_Line(top=w["top"], bottom=w["bottom"], words=[w]))
     for line in lines:
         line.words.sort(key=lambda w: w["x0"])
+        line.words = _join_letter_spaced(line.words)
     lines.sort(key=lambda ln: ln.top)
     return lines
 
@@ -84,7 +138,8 @@ def _split_line(line: _Line, gx0: float, gx1: float) -> tuple[_Line | None, _Lin
 
 
 def _find_gutter(lines: list[_Line], width: float) -> tuple[float, float] | None:
-    """Widest vertical band in the middle of the page that (almost) no word covers."""
+    """Widest vertical band in the middle of the page that (almost) no word covers and
+    that has text on both sides (an empty right margin is not a gutter)."""
     if len(lines) < 3:
         return None
     lo, hi = int(width * 0.15), int(width * 0.85)
@@ -94,25 +149,40 @@ def _find_gutter(lines: list[_Line], width: float) -> tuple[float, float] | None
             for x in range(max(lo, int(w["x0"])), min(hi, int(w["x1"]) + 1)):
                 cover[x] += 1
     allowed = max(1, len(lines) // 10)  # a few full-width lines (name banner) may cross
-    best: tuple[int, int] | None = None
+    bands: list[tuple[int, int]] = []
     start: int | None = None
     for x in range(lo, hi + 1):
         free = cover[x] <= allowed and x < hi
         if free and start is None:
             start = x
         elif not free and start is not None:
-            if best is None or x - start > best[1] - best[0]:
-                best = (start, x)
+            if x - start >= GUTTER_MIN_WIDTH:
+                bands.append((start, x))
             start = None
-    if best is None or best[1] - best[0] < GUTTER_MIN_WIDTH:
-        return None
-    gx0, gx1 = float(best[0]), float(best[1])
-    # Both sides must hold text, otherwise it is just an indent or a ragged right edge.
-    left = sum(1 for ln in lines if any(w["x1"] <= gx0 + 1 for w in ln.words))
-    right = sum(1 for ln in lines if any(w["x0"] >= gx1 - 1 for w in ln.words))
-    if min(left, right) < 2:
-        return None
-    return gx0, gx1
+    for band in sorted(bands, key=lambda b: b[1] - b[0], reverse=True):
+        gutter = _narrow(band, cover)
+        gx0, gx1 = gutter
+        # Both sides must hold text, otherwise it is an indent or a ragged right edge.
+        left = sum(1 for ln in lines if any(w["x1"] <= gx0 + 1 for w in ln.words))
+        right = sum(1 for ln in lines if any(w["x0"] >= gx1 - 1 for w in ln.words))
+        if min(left, right) >= 2:
+            return gutter
+    return None
+
+
+def _narrow(band: tuple[int, int], cover: list[int]) -> tuple[float, float]:
+    """A few long lines of the left column may reach into the band: split at its least
+    covered strip, so only lines that really cross both columns count as crossing."""
+    least = min(cover[band[0] : band[1]])
+    strips: list[tuple[int, int]] = []
+    for x in range(band[0], band[1]):
+        if cover[x] == least:
+            if strips and strips[-1][1] == x:
+                strips[-1] = (strips[-1][0], x + 1)
+            else:
+                strips.append((x, x + 1))
+    narrow = max(strips, key=lambda s: s[1] - s[0])
+    return float(narrow[0]), float(narrow[1])
 
 
 Run = tuple[list[_Line], float]  # lines in reading order + the right edge of their column
@@ -144,7 +214,9 @@ def _reading_order(lines: list[_Line], width: float, right_edge: float) -> list[
                 row_run.extend(p for p in (lpart, rpart) if p)
         return [(row_run, right_edge)]
 
-    sidebar_edge = (gx0 + gx1) / 2
+    # The left column's own right edge (where its lines wrap), not the middle of the gutter.
+    left_ends = sorted(lp.x1 for lp, _, sp in parts if lp and not sp)
+    sidebar_edge = left_ends[int(len(left_ends) * 0.9)] if left_ends else (gx0 + gx1) / 2
     runs: list[Run] = []
     left: list[_Line] = []
     right: list[_Line] = []
@@ -206,9 +278,12 @@ def _lines_to_blocks(
     para_gap = (statistics.median(gaps) * 1.8 + 1) if gaps else 6.0
 
     for line in run:
+        # A glyph without a unicode mapping: a bullet at the start, else a decoration
+        # (rating stars, icons); "(cid:N)" inside a word is real breakage and stays.
         text = _GLYPH_BULLET_RE.sub("• ", line.text)
-        if not text:
-            continue
+        text = re.sub(r"(?:(?<=\s)|^)\(cid:\d+\)(?=\s|$)", "", text).strip()
+        if not re.search(r"\w", text):
+            continue  # a lone bullet, rule or icon
         words = len(text.split())
         # Bold alone is not enough: CVs bold job titles and employers, which are not sections.
         is_heading = is_section_keyword(text) or (line.size >= body_size * 1.2 and words <= 8)
@@ -216,7 +291,7 @@ def _lines_to_blocks(
         same_row = prev is not None and abs(line.top - prev.top) <= LINE_TOLERANCE
         if is_heading:
             flush()
-            blocks.append(TextBlock(kind=BlockKind.HEADING, text=text.rstrip(":"), page=page_no))
+            blocks.append(TextBlock(kind=BlockKind.HEADING, text=tidy_heading(text), page=page_no))
             prev, row_x0 = line, line.x0
             continue
         if same_row and not bullet and buf_kind is not BlockKind.HEADING:
@@ -255,20 +330,62 @@ def _running_lines(pages_lines: list[list[_Line]], heights: list[float]) -> set[
     return {t for t, n in counts.items() if n >= threshold}
 
 
+def _not_icon(obj: dict[str, Any]) -> bool:
+    return obj.get("object_type") != "char" or not _ICON_FONT_RE.search(obj.get("fontname", ""))
+
+
+def _open_error(path: Path, error: Exception) -> str:
+    """A message a recruiter can act on, instead of the PDF library's."""
+    cause = error.args[0] if error.args and isinstance(error.args[0], Exception) else error
+    name = type(cause).__name__
+    head = path.read_bytes()[:1024] if path.is_file() else b""
+    if not head.strip():
+        return "The file is empty."
+    if name == "PDFPasswordIncorrect" or "password" in str(cause).lower():
+        return "The PDF is password-protected; ask for a copy without a password."
+    if b"%PDF" not in head:
+        kind = (
+            "a Word document or a zip file"
+            if head.startswith((b"PK", b"\xd0\xcf\x11\xe0"))
+            else "a web page"
+            if b"<html" in head.lower() or b"<!doctype" in head.lower()
+            else "an image"
+            if head[:4] in (b"\x89PNG", b"\xff\xd8\xff\xe0", b"\xff\xd8\xff\xe1")
+            else "not a PDF"
+        )
+        return f"The file is named .pdf but is {kind}; rename it or ask for the original."
+    if name in ("PSEOF", "PDFSyntaxError"):
+        return "The PDF is damaged or incomplete (it may not have downloaded fully)."
+    return f"Cannot open the PDF ({name}: {cause})."
+
+
 def extract_pdf(path: Path, *, doc_type: DocType, display_path: str) -> SourceDocument:
     try:
         pdf = pdfplumber.open(path)
+        _ = pdf.pages  # parses the document: password and structure errors surface here
     except Exception as e:
-        raise ExtractionError(f"Cannot open PDF: {e}") from e
+        raise ExtractionError(_open_error(path, e)) from e
     warnings: list[str] = []
     with pdf:
         pages_lines: list[list[_Line]] = []
         heights: list[float] = []
         widths: list[float] = []
         for i, page in enumerate(pdf.pages, start=1):
-            words = page.extract_words(extra_attrs=["size"], keep_blank_chars=False)
+            page = page.filter(_not_icon)
+            try:
+                words = page.extract_words(
+                    extra_attrs=["size"], keep_blank_chars=False, x_tolerance_ratio=WORD_GAP_RATIO
+                )
+            except Exception as e:  # noqa: BLE001 - one damaged page shouldn't lose the rest
+                warnings.append(f"Page {i} could not be read ({type(e).__name__}).")
+                words = []
             if not words and page.images:
                 warnings.append(f"Page {i} has no text layer (scanned image?).")
+            elif not words and (page.curves or page.rects):
+                warnings.append(
+                    f"Page {i} has no text, only drawn shapes: the text may have been converted "
+                    "to outlines (some design tools do this); ask for a PDF with real text."
+                )
             pages_lines.append(_group_lines(words))
             heights.append(float(page.height))
             widths.append(float(page.width))

@@ -15,7 +15,7 @@ from cvscore.config import ModelRole, Provider, Settings, load_settings
 from cvscore.ingest import ExtractionError, extract_file, ingest, read_form_table
 from cvscore.llm import chat_model, embeddings_model
 from cvscore.llm.structured import LLMProvider, settings_provider
-from cvscore.models import DocType
+from cvscore.models import DocType, SourceDocument
 from cvscore.observability import Tracer
 
 app = typer.Typer(help="Rank candidate CVs against a job description.", no_args_is_help=True)
@@ -176,6 +176,48 @@ def ingest_cmd(
         f"\n{len(result.candidates)} candidates -> {docs_dir} "
         f"({problems} warnings/errors). identity_map.json contains real names: keep it private."
     )
+
+
+@app.command()
+def inspect(
+    files: Annotated[list[Path], typer.Argument(help="Documents to inspect.", exists=True)],
+    text: Annotated[bool, typer.Option(help="Also print the extracted text, block by block.")] = (
+        True
+    ),
+    redacted: Annotated[
+        bool, typer.Option(help="Show the text as the models would see it (redacted).")
+    ] = False,
+) -> None:
+    """Show what is read from documents: type, name, quality, warnings and the text.
+
+    Use it to see why a file is read badly. Block markers: H heading, P paragraph, L list
+    item, T table row; * marks contact details (removed before any model call).
+    """
+    from cvscore.ingest.discovery import read_file
+    from cvscore.redact import redact_blocks
+
+    def ex(path: Path, doc_type: DocType, display: str) -> SourceDocument:
+        return extract_file(path, doc_type=doc_type, display_path=display)
+
+    for path in files:
+        f = read_file(path, path.parent, ex)
+        typer.secho(f"\n== {path.name}", bold=True)
+        if f.document is None:
+            typer.secho(f"   cannot read: {f.error}", fg="red")
+            continue
+        doc = f.document
+        names = ", ".join(f"{n} ({where})" for n, where in f.names) or "-"
+        typer.echo(f"   type: {f.doc_type} ({f.type_reason})")
+        typer.echo(f"   name: {names}")
+        typer.echo(f"   quality: {doc.quality:.2f}, {len(doc.text)} characters, {doc.extractor}")
+        for w in [*f.warnings, *doc.warnings]:
+            typer.secho(f"   ! {w}", fg="yellow")
+        if text:
+            blocks = redact_blocks(doc.blocks, [n for n, _ in f.names]) if redacted else doc.blocks
+            for b in blocks:
+                mark = b.kind.value[0].upper() + ("*" if b.is_contact else " ")
+                page = f"p{b.page} " if b.page else ""
+                typer.echo(f"   {mark} {page}{b.text}")
 
 
 def llm_provider(settings: Settings, cache_dir: Path | None) -> LLMProvider:

@@ -13,7 +13,7 @@ PROFILE_URL_RE = re.compile(
 # Candidate phone numbers: digits with optional +, spaces, dots, dashes, parentheses between.
 # Filtered by ``is_phone`` so dates like "2016 - 2019" or "01.2019 - 05.2021" are kept.
 PHONE_CANDIDATE_RE = re.compile(r"(?<![\w/])\+?\(?\d(?:[\s().-]*\d){7,}(?![\w/])")
-_YEAR_RE = re.compile(r"(?:19|20)\d\d")
+_YEAR_RE = re.compile(r"(?:18|19|20)\d\d")
 REDACTED_RE = re.compile(r"\[REDACTED(?:: [^\]]+)?\]")
 
 

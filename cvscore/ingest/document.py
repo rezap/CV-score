@@ -62,7 +62,8 @@ def assign_sections(blocks: list[TextBlock]) -> None:
 
 def _name_like(text: str) -> bool:
     """A short line without punctuation, like a name or a job title under it."""
-    return len(text.split()) <= 4 and not re.search(r"[,:;.!?|]", text)
+    # Initials are fine ("Claud D. Park"); other punctuation means a sentence or a list.
+    return len(text.split()) <= 4 and not re.search(r"[,:;!?|]|(?<![A-Z])\.", text)
 
 
 def mark_contact_area(blocks: list[TextBlock], *, top_of_cv: bool) -> None:

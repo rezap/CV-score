@@ -40,3 +40,7 @@ def test_find_phones_and_contact_details() -> None:
 )
 def test_is_phone_nordic_numbers_and_dates(text: str, phone: bool) -> None:
     assert is_phone(text) is phone
+
+
+def test_old_date_ranges_are_not_phone_numbers() -> None:
+    assert not is_phone("1863-1865")

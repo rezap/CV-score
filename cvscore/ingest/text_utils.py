@@ -67,6 +67,22 @@ SECTION_KEYWORDS: frozenset[str] = frozenset(
         "contact details",
         "personal details",
         "personal information",
+        "other information",
+        "additional information",
+        "personal projects",
+        "side projects",
+        "activities",
+        "extracurricular activities",
+        "leadership",
+        "professional profile",
+        "career summary",
+        "summary of qualifications",
+        "technologies",
+        "tools",
+        "tech stack",
+        "soft skills",
+        "awards and honors",
+        "honors and awards",
         # German
         "profil",
         "kurzprofil",
@@ -161,6 +177,21 @@ def join_lines(lines: list[str]) -> str:
     return out
 
 
+_COMPACT_KEYWORDS = {k.replace(" ", ""): k for k in SECTION_KEYWORDS}
+
+
 def is_section_keyword(line: str) -> bool:
+    """A known CV section name, also when split by stray spaces ("edu cation", "E X P")."""
     key = normalize_text(line).rstrip(":").strip().lower()
-    return key in SECTION_KEYWORDS
+    return key in SECTION_KEYWORDS or key.replace(" ", "") in _COMPACT_KEYWORDS
+
+
+def tidy_heading(line: str) -> str:
+    """``edu cation`` -> ``education``: rejoin a section name split by stray spaces."""
+    text = normalize_text(line).rstrip(":").strip()
+    keyword = _COMPACT_KEYWORDS.get(text.lower().replace(" ", ""))
+    if keyword is None or text.lower() == keyword:
+        return text
+    if text.isupper():
+        return keyword.upper()
+    return keyword.capitalize() if text[:1].isupper() else keyword

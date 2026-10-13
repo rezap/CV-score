@@ -298,3 +298,119 @@ def marketing_cv_docx(path: Path) -> Path:
         doc.add_paragraph(text, style="List Bullet")
     doc.save(str(path))
     return path
+
+
+def _words_without_spaces(
+    c: Canvas, x: float, y: float, text: str, font: str, size: float, gap: float
+) -> None:
+    """Draw each word on its own with a gap of ``gap`` em and no space characters, as LaTeX
+    does; tight justification makes the gaps smaller than a fixed 3 pt tolerance."""
+    c.setFont(font, size)
+    for word in text.split():
+        c.drawString(x, y, word)
+        x += c.stringWidth(word, font, size) + gap * size
+
+
+def _letter_spaced(c: Canvas, x: float, y: float, text: str, font: str, size: float) -> None:
+    """Tracked heading: every letter placed on its own, 0.35 em apart, wider at word spaces."""
+    c.setFont(font, size)
+    for ch in text:
+        if ch != " ":
+            c.drawString(x, y, ch)
+        x += c.stringWidth(ch, font, size) + 0.35 * size
+
+
+def latex_style_pdf(path: Path) -> Path:
+    """Small, tightly justified text with no space characters (word gaps of 0.15 em)."""
+    c = Canvas(str(path), pagesize=A4)
+    y = PAGE_H - 60
+    for text, font, size in [
+        ("Erik Lindqvist", "Helvetica-Bold", 16),
+        ("Experience", "Helvetica-Bold", 12),
+        (
+            "Built an internal app to run batch campaigns for marketing and analytics teams.",
+            "Helvetica",
+            8,
+        ),
+        (
+            "Reduced delivery time by thirty percent through queuing and A/B testing.",
+            "Helvetica",
+            8,
+        ),
+    ]:
+        _words_without_spaces(c, 60, y, text, font, size, gap=0.15)
+        y -= size * 1.8
+    c.showPage()
+    c.save()
+    return path
+
+
+def design_tool_pdf(path: Path) -> Path:
+    """A design-tool layout: narrow sidebar, main column ending at two thirds of the page
+    (a wide empty right margin), a big name wrapped over two lines, tracked headings."""
+    c = Canvas(str(path), pagesize=A4)
+    c.setFont("Helvetica-Bold", 30)
+    c.drawString(30, PAGE_H - 60, "SOFIE")
+    c.drawString(30, PAGE_H - 95, "HANSEN")
+    side, main = 30, 210
+    y = PAGE_H - 160
+    _letter_spaced(c, side, y, "CONTACT", "Helvetica-Bold", 9)
+    _letter_spaced(c, main, y, "ABOUT ME", "Helvetica-Bold", 9)
+    y = _lines(
+        c,
+        main,
+        y - 18,
+        [
+            ("Curious, data-driven marketer who loves", "Helvetica", 9),
+            ("building brands people talk about.", "Helvetica", 9),
+        ],
+    )
+    _lines(
+        c,
+        side,
+        PAGE_H - 178,
+        [
+            ("sofie.hansen@example.com", "Helvetica", 8),
+            ("+47 98 76 54 32", "Helvetica", 8),
+            ("Oslo, Norway", "Helvetica", 8),
+        ],
+    )
+    y -= 14
+    _letter_spaced(c, side, y, "SKILLS", "Helvetica-Bold", 9)
+    _letter_spaced(c, main, y, "EXPERIENCE", "Helvetica-Bold", 9)
+    _lines(
+        c,
+        side,
+        y - 18,
+        [
+            ("SEO and SEM", "Helvetica", 8),
+            ("Paid social", "Helvetica", 8),
+            ("Copywriting", "Helvetica", 8),
+        ],
+    )
+    _lines(
+        c,
+        main,
+        y - 18,
+        [
+            ("Marketing Manager, Nordic Coffee, 2019 - 2024", "Helvetica-Bold", 9),
+            ("Grew online sales from NOK 4M to NOK 11M in", "Helvetica", 9),
+            ("three years and launched a subscription.", "Helvetica", 9),
+            ("", "Helvetica", 9),
+            ("Marketing Specialist, Oslo Media, 2016 - 2019", "Helvetica-Bold", 9),
+            ("Ran paid social campaigns for 25 clients.", "Helvetica", 9),
+        ],
+    )
+    c.showPage()
+    c.save()
+    return path
+
+
+def password_pdf(path: Path) -> Path:
+    from reportlab.lib import pdfencrypt
+
+    c = Canvas(str(path), pagesize=A4, encrypt=pdfencrypt.StandardEncryption("secret"))
+    c.drawString(60, 700, "Jane Example")
+    c.showPage()
+    c.save()
+    return path

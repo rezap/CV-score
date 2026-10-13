@@ -30,3 +30,12 @@ def test_only_short_contact_lines_outside_cvs() -> None:
     bs = blocks()
     mark_contact_area(bs, top_of_cv=False)
     assert not any(b.is_contact for b in bs)
+
+
+def test_name_with_initial_at_top_of_cv_is_flagged() -> None:
+    bs = [
+        TextBlock(kind=BlockKind.HEADING, text="Claud D. Park"),
+        TextBlock(kind=BlockKind.HEADING, text="Experience"),
+    ]
+    mark_contact_area(bs, top_of_cv=True)
+    assert bs[0].is_contact

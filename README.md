@@ -108,7 +108,11 @@ cvscore ingest applications/ --out work/
   a person is never merged with another person's folder. Two CVs that disagree on name and
   email are never merged.
 - **Formats:** PDF, DOCX, TXT/MD; `.doc`, `.rtf` and `.odt` if LibreOffice is installed.
-  Scanned PDFs (no text layer) are flagged, not OCR'd.
+  Scanned PDFs (no text layer) and PDFs whose text was turned into outlines are flagged,
+  not OCR'd. Password-protected, damaged or mislabelled files get a message saying so.
+- **When a file is read badly:** `cvscore inspect cv.pdf` shows what was read: the
+  document type and why, the name found, a quality score, warnings, and the text block by
+  block (`--redacted` shows it as the models see it).
 - **Application forms:** JSON/YAML (`{"question": "answer"}` or a list of
   `{question, answer}`) or CSV next to the candidate's files, or one export for everyone
   with `--forms export.csv --form-key <column with the folder or candidate name>`.

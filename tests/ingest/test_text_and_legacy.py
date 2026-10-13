@@ -3,7 +3,13 @@ from pathlib import Path
 import pytest
 
 from cvscore.ingest import ExtractionError, extract_file, legacy
-from cvscore.ingest.text_utils import join_lines, normalize_text, strip_bullet
+from cvscore.ingest.text_utils import (
+    is_section_keyword,
+    join_lines,
+    normalize_text,
+    strip_bullet,
+    tidy_heading,
+)
 from cvscore.models import BlockKind, DocType
 
 
@@ -75,3 +81,18 @@ def test_unsupported_and_missing(tmp_path: Path) -> None:
         extract_file(f, doc_type=DocType.OTHER, display_path="photo.jpg")
     with pytest.raises(ExtractionError, match="not found"):
         extract_file(tmp_path / "nope.pdf", doc_type=DocType.CV, display_path="nope.pdf")
+
+
+@pytest.mark.parametrize(
+    ("line", "keyword", "tidy"),
+    [
+        ("edu cation", True, "education"),  # first letters in another colour
+        ("E X P E R I E N C E", True, "EXPERIENCE"),
+        ("ABOUTME", True, "ABOUT ME"),
+        ("Work Experience:", True, "Work Experience"),
+        ("Educated guess", False, "Educated guess"),
+    ],
+)
+def test_split_section_names(line: str, keyword: bool, tidy: str) -> None:
+    assert is_section_keyword(line) is keyword
+    assert tidy_heading(line) == tidy

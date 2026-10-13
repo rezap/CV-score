@@ -14,6 +14,8 @@ dependencies = [
     "langfuse>=4.0",
     "langgraph>=1.0",
     "pdfplumber>=0.11",
+    "pillow>=10",
+    "pypdfium2>=4",
     "pydantic>=2.7",
     "pydantic-settings>=2.4",
     "python-docx>=1.1",
@@ -71,7 +73,7 @@ strict = true
 plugins = ["pydantic.mypy"]
 
 [[tool.mypy.overrides]]
-module = ["langfuse.*"]
+module = ["langfuse.*", "pypdfium2.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

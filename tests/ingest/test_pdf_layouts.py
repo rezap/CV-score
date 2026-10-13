@@ -79,3 +79,23 @@ def test_cli_inspect(tmp_path: Path) -> None:
     assert "[REDACTED: contact details]" in result.output
     assert "sofie.hansen@example.com" not in result.output
     assert "cannot read: The file is empty." in result.output
+
+
+def test_cli_inspect_reads_scans_with_ocr(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from typer.testing import CliRunner
+
+    from cvscore import cli
+    from cvscore.ingest.ocr import PageTranscript
+    from tests.fakes import FakeLLM
+
+    (tmp_path / "cvscore.yaml").write_text("langfuse:\n  enabled: false\n")
+    fake = FakeLLM({PageTranscript: lambda _: {"text": "## Experience\n- Data Engineer, Initech"}})
+    monkeypatch.setattr(cli, "llm_provider", lambda settings, cache_dir: fake.provider())
+    scan = builders.scanned_pdf(tmp_path / "scan.pdf")
+
+    result = CliRunner().invoke(cli.app, ["inspect", str(scan)])
+    assert result.exit_code == 0, result.output
+    assert "pdfplumber+ocr" in result.output and "Data Engineer, Initech" in result.output
+
+    result = CliRunner().invoke(cli.app, ["inspect", str(scan), "--no-ocr"])
+    assert "no text layer" in result.output and len(fake.calls) == 1

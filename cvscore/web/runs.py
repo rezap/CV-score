@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 from cvscore.config import Settings
 from cvscore.ingest import ingest
+from cvscore.ingest.ocr import ocr_hook
 from cvscore.llm.structured import LLMProvider
 from cvscore.models import DocType, JobProfile
 from cvscore.service import assess_all, timestamp, write_outputs
@@ -137,8 +138,13 @@ class RunManager:
 
     def _run(self, out: Path, meta: RunMeta, request: RunRequest, settings: Settings) -> None:
         try:
+            cache_dir = self.runs_dir / ".cache" if self.cache else None
+            llm = self.provider(settings, cache_dir)
             ingested = ingest(
-                Path(request.folder), overrides=request.overrides, exclude=request.exclude
+                Path(request.folder),
+                overrides=request.overrides,
+                exclude=request.exclude,
+                ocr=ocr_hook(llm, settings.ocr),
             )
             summaries: list[CandidateSummary] = [summarize(s) for s in ingested.sources]
             (out / "candidates.json").write_text(
@@ -154,8 +160,6 @@ class RunManager:
                 meta.done, meta.total = done, total
                 self._save(out, meta)
 
-            cache_dir = self.runs_dir / ".cache" if self.cache else None
-            llm = self.provider(settings, cache_dir)
             outcome = assess_all(
                 request.job, ingested, llm, settings, run_id=meta.id, on_progress=progress
             )

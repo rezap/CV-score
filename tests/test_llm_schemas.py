@@ -7,6 +7,7 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 from pydantic import BaseModel
 
 from cvscore.extract import CandidateProfileDraft
+from cvscore.ingest.ocr import PageTranscript
 from cvscore.job import JobProfileDraft
 from cvscore.score import ScoringDraft
 
@@ -32,7 +33,9 @@ def walk(node: Any, path: str = "$") -> list[str]:
     return problems
 
 
-@pytest.mark.parametrize("schema", [JobProfileDraft, CandidateProfileDraft, ScoringDraft])
+@pytest.mark.parametrize(
+    "schema", [JobProfileDraft, CandidateProfileDraft, ScoringDraft, PageTranscript]
+)
 def test_strict_schema(schema: type[BaseModel]) -> None:
     params = convert_to_openai_tool(schema, strict=True)["function"]["parameters"]
     assert walk(params) == []

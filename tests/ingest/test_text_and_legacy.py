@@ -75,10 +75,10 @@ def test_legacy_without_libreoffice(tmp_path: Path, monkeypatch: pytest.MonkeyPa
 
 
 def test_unsupported_and_missing(tmp_path: Path) -> None:
-    f = tmp_path / "photo.jpg"
+    f = tmp_path / "notes.xyz"
     f.write_bytes(b"\xff\xd8")
     with pytest.raises(ExtractionError, match="Unsupported"):
-        extract_file(f, doc_type=DocType.OTHER, display_path="photo.jpg")
+        extract_file(f, doc_type=DocType.OTHER, display_path="notes.xyz")
     with pytest.raises(ExtractionError, match="not found"):
         extract_file(tmp_path / "nope.pdf", doc_type=DocType.CV, display_path="nope.pdf")
 

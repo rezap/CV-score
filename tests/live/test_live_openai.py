@@ -9,8 +9,9 @@ keep job.yaml and the report in; the CI workflow uploads it).
 
 Model output varies, so the assertions check what a working system must get right
 regardless of wording: the obviously strongest candidate ranks first, the unrelated one
-ranks below every relevant one, the scanned CV is not sent to the model, every judgement
-is backed by verified quotes, and no personal data appears in any prompt.
+ranks below every relevant one, a scanned CV is read by OCR (vision model) and ranked, a
+blank scan is flagged and not scored, every judgement is backed by verified quotes, and no
+personal data appears in any prompt.
 """
 
 import json
@@ -64,7 +65,26 @@ SECRETS = [
     "Jane Example", "jane@example.com", "7946 0958",
     "Alex Sample", "alex.sample@example.org", "1234 5678",
     "Morgan Lee", "morgan.lee@example.net", "496 0000",
+    "Riley Scanlon", "riley.scanlon@example.com", "555 0199",
 ]  # fmt: skip
+
+SCANNED_CV = [
+    "Riley Scanlon",
+    "riley.scanlon@example.com  |  +1 202 555 0199",
+    "",
+    "EXPERIENCE",
+    "Senior Data Engineer, Initech, 2017 - present",
+    "- Built and ran streaming pipelines with Kafka and Spark for 40 teams.",
+    "- Mentored four data engineers and led the move to Airflow.",
+    "Data Engineer, Globex, 2014 - 2017",
+    "- Wrote Python and SQL ETL jobs; cut nightly load time by 60%.",
+    "",
+    "EDUCATION",
+    "MSc Computer Science, 2014",
+    "",
+    "SKILLS",
+    "Python, SQL, Spark, Kafka, Airflow, dbt",
+]
 
 
 class RecordingLLM:
@@ -78,7 +98,9 @@ class RecordingLLM:
     def generate(
         self, schema: type[T], messages: Sequence[BaseMessage], config: RunnableConfig | None
     ) -> T:
-        self.prompts.extend(str(m.content) for m in messages)
+        for m in messages:  # text only: an OCR request also carries the page image
+            parts = m.content if isinstance(m.content, list) else [m.content]
+            self.prompts.extend(p if isinstance(p, str) else str(p.get("text", "")) for p in parts)
         return self.inner.generate(schema, messages, config)
 
 
@@ -92,13 +114,14 @@ def workdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     )
     (tmp_path / "job_ad.txt").write_text(JOB_AD)
     root = tmp_path / "candidates"
-    for name in ["Jane Example", "Alex Sample", "Morgan Lee", "Sam Roe"]:
+    for name in ["Jane Example", "Alex Sample", "Morgan Lee", "Riley Scanlon", "Sam Roe"]:
         (root / name).mkdir(parents=True)
     builders.two_column_cv_pdf(root / "Jane Example" / "cv.pdf")
     builders.single_column_pdf(root / "Jane Example" / "cover_letter.pdf")
     builders.word_style_cv_docx(root / "Alex Sample" / "cv.docx")
     builders.marketing_cv_docx(root / "Morgan Lee" / "cv.docx")
-    builders.scanned_pdf(root / "Sam Roe" / "resume.pdf")
+    builders.readable_scan_pdf(root / "Riley Scanlon" / "cv.pdf", SCANNED_CV)
+    builders.scanned_pdf(root / "Sam Roe" / "resume.pdf")  # a blank page
     return tmp_path
 
 
@@ -141,7 +164,7 @@ def test_live_end_to_end(workdir: Path, monkeypatch: pytest.MonkeyPatch) -> None
     totals = {name: card["total"] for name, card in cards.items()}
     print("totals:", totals)
 
-    # Unreadable CV: never sent to the model, flagged, no score.
+    # A blank scan: nothing to read, flagged, no score.
     assert cards["Sam Roe"]["total"] is None
     assert "needs_review" in cards["Sam Roe"]["flags"]
 
@@ -149,6 +172,9 @@ def test_live_end_to_end(workdir: Path, monkeypatch: pytest.MonkeyPatch) -> None
     assert cards["Jane Example"]["rank"] == 1, totals
     assert totals["Morgan Lee"] is not None
     assert totals["Morgan Lee"] < totals["Alex Sample"] < totals["Jane Example"], totals
+    # The scanned CV was read by OCR and assessed like the others: a relevant profile.
+    assert totals["Riley Scanlon"] is not None, cards["Riley Scanlon"]
+    assert totals["Morgan Lee"] < totals["Riley Scanlon"], totals
 
     # Scores for a real candidate are backed by quotes that were verified against the CV.
     jane = cards["Jane Example"]
@@ -157,11 +183,14 @@ def test_live_end_to_end(workdir: Path, monkeypatch: pytest.MonkeyPatch) -> None
     passed = [c for c in jane["requirement_checks"] if c["status"] == "pass"]
     assert passed and all(c["evidence"] for c in passed), jane["requirement_checks"]
 
-    # Nothing identifying reached the model; the scanned CV was never sent.
+    # Nothing identifying reached the scoring models (OCR, which reads the page image
+    # before redaction, is the only step that sees personal data).
     sent = "\n".join(prompts)
     leaked = [s for s in SECRETS if s.lower() in sent.lower()]
     assert not leaked, leaked
     candidate_calls = sum("<document type=" in p for p in prompts)
-    assert candidate_calls == 6  # 3 readable candidates x (extraction + scoring)
+    assert candidate_calls == 8  # 4 readable candidates x (extraction + scoring)
+    ocr_calls = sum(p == "Transcribe this page." for p in prompts)
+    assert ocr_calls == 2  # the readable scan and the blank one
 
     assert (out / "report.html").is_file()

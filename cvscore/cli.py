@@ -73,7 +73,10 @@ def doctor(
         has_embeddings = oa.embeddings is not None
     else:
         az = settings.azure
-        typer.echo(f"Azure endpoint: {az.endpoint or '(not set)'}  api_version: {az.api_version}")
+        from cvscore.llm.factory import is_v1_endpoint
+
+        api = "v1 API" if is_v1_endpoint(az.endpoint) else f"api_version: {az.api_version}"
+        typer.echo(f"Azure endpoint: {az.endpoint or '(not set)'}  {api}")
         for role in ModelRole:
             d = az.models.get(role)
             typer.echo(f"  {role:<10} -> {d.deployment if d else '(not set)'}")

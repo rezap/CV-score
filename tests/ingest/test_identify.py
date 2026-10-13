@@ -8,10 +8,11 @@ from cvscore.ingest.identify import (
     filename_key,
     looks_like_name,
     name_from_filename,
+    names_in,
     same_person,
     type_from_filename,
 )
-from cvscore.models import DocType
+from cvscore.models import BlockKind, DocType, SourceDocument, TextBlock
 
 
 def cv_text(name: str, email: str) -> str:
@@ -252,3 +253,33 @@ def test_identical_copies_are_skipped(tmp_path: Path) -> None:
     assert source.warnings == [
         "kari_nordmann_cv.txt is a copy of kari_nordmann_cv (1).txt; skipped."
     ]
+
+
+def doc_with(*blocks: tuple[BlockKind, str]) -> SourceDocument:
+    return SourceDocument(
+        doc_type=DocType.CV,
+        path="cv.pdf",
+        sha256="0",
+        text="",
+        blocks=[TextBlock(kind=k, text=t) for k, t in blocks],
+        extractor="test",
+        quality=1,
+    )
+
+
+@pytest.mark.parametrize(
+    ("blocks", "name"),
+    [
+        # name and contact details on one row
+        ([(BlockKind.HEADING, "Erik Lindqvist Email: erik@example.com")], "Erik Lindqvist"),
+        # a place is not a name; the large heading is preferred
+        (
+            [(BlockKind.PARAGRAPH, "United Kingdom"), (BlockKind.HEADING, "Erik Lindqvist")],
+            "Erik Lindqvist",
+        ),
+        # a name wrapped over two heading lines
+        ([(BlockKind.HEADING, "INGRID"), (BlockKind.HEADING, "SOLBERG")], "Ingrid Solberg"),
+    ],
+)
+def test_name_at_top_of_cv(blocks: list[tuple[BlockKind, str]], name: str) -> None:
+    assert names_in(doc_with(*blocks), Path("cv.pdf"))[0] == (name, "top of the CV")

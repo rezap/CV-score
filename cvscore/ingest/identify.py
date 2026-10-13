@@ -21,7 +21,7 @@ from pathlib import Path
 
 from cvscore.ingest.text_utils import is_section_keyword, normalize_text
 from cvscore.models import BlockKind, DocType, SourceDocument
-from cvscore.pii import EMAIL_RE
+from cvscore.pii import EMAIL_RE, has_contact_details
 
 # --- File names ----------------------------------------------------------------------
 
@@ -409,6 +409,35 @@ _NOT_NAME_WORDS = frozenset(
         "stavanger",
         "trondheim",
         "london",
+        # places that look like names ("United Kingdom", "New York")
+        "united",
+        "kingdom",
+        "states",
+        "america",
+        "republic",
+        "new",
+        "york",
+        "san",
+        "francisco",
+        "street",
+        "road",
+        "avenue",
+        "india",
+        "china",
+        "korea",
+        "japan",
+        "france",
+        "spain",
+        "italy",
+        "canada",
+        "australia",
+        "netherlands",
+        "switzerland",
+        "poland",
+        "finland",
+        "iceland",
+        "europe",
+        "remote",
     }
 )
 _PARTICLES = frozenset(
@@ -456,12 +485,39 @@ def pretty_name(text: str) -> str:
 
 
 def _top_area(doc: SourceDocument, limit: int = 12) -> list[str]:
-    out: list[str] = []
+    """Lines before the first section heading, large-type lines (headings) first."""
+    blocks = []
     for b in doc.blocks[:limit]:
         if b.kind is BlockKind.HEADING and is_section_keyword(b.text):
             break
-        out.append(b.text)
-    return out
+        blocks.append(b)
+    headings = [b.text for b in blocks if b.kind is BlockKind.HEADING]
+    # A large name wraps in a narrow sidebar: "Ingrid" / "Solberg", "SOFIE" / "HANSEN".
+    pairs = [
+        f"{a.text} {b.text}"
+        for a, b in zip(blocks, blocks[1:], strict=False)
+        if a.kind is b.kind is BlockKind.HEADING and len(a.text.split()) == len(b.text.split()) == 1
+    ]
+    return headings + pairs + [b.text for b in blocks if b.kind is not BlockKind.HEADING]
+
+
+def _name_at_start(text: str) -> str | None:
+    """The name at the start of a top line: "Jane Doe · Data Scientist", "Jane Doe | Oslo",
+    or "Jane Doe Email: jane@x.com" (name and contact details on one row)."""
+    text = normalize_text(text)
+    first = re.split(r"\s+[|·•–—-]\s+", text)[0]
+    if looks_like_name(first):
+        return first
+    tokens = text.split()
+    for n in (4, 3, 2):
+        rest = " ".join(tokens[n:])
+        if (
+            len(tokens) > n
+            and looks_like_name(" ".join(tokens[:n]))
+            and (has_contact_details(rest) or re.match(r"(e-?mail|phone|mobile|tel)\b", rest, re.I))
+        ):
+            return " ".join(tokens[:n])
+    return None
 
 
 def _signature(doc: SourceDocument) -> str | None:
@@ -503,10 +559,9 @@ def names_in(doc: SourceDocument | None, path: Path) -> list[tuple[str, str]]:
                 found.append((sig, "letter signature"))
         else:
             for text in _top_area(doc):
-                # "Jane Doe · Data Scientist" or "Jane Doe | Oslo" on one line
-                first = re.split(r"\s+[|·•–—-]\s+", normalize_text(text))[0]
-                if looks_like_name(first):
-                    found.append((pretty_name(first), "top of the CV"))
+                name = _name_at_start(text)
+                if name:
+                    found.append((pretty_name(name), "top of the CV"))
                     break
             if not found:
                 sig = _signature(doc)

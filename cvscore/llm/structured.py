@@ -87,17 +87,17 @@ class CachedLLM:
         return result
 
 
-def azure_provider(settings: Settings, *, cache_dir: Path | None = None) -> LLMProvider:
-    """Provider backed by the Azure deployments configured for each role."""
-    from cvscore.llm.factory import get_chat_model
+def settings_provider(settings: Settings, *, cache_dir: Path | None = None) -> LLMProvider:
+    """Provider backed by the models configured for each role (Azure or OpenAI)."""
+    from cvscore.llm.factory import chat_model, model_id
 
     instances: dict[ModelRole, StructuredLLM] = {}
 
     def provide(role: ModelRole) -> StructuredLLM:
         if role not in instances:
-            model = get_chat_model(role, settings.azure)
-            deployment = settings.azure.models[role].deployment
-            llm: StructuredLLM = ChatModelLLM(model, model_id=f"azure:{deployment}")
+            llm: StructuredLLM = ChatModelLLM(
+                chat_model(role, settings), model_id=model_id(role, settings)
+            )
             if cache_dir is not None:
                 llm = CachedLLM(llm, cache_dir)
             instances[role] = llm

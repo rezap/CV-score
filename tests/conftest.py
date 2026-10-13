@@ -12,6 +12,11 @@ import pytest
 
 _ENV_PREFIXES = ("CVSCORE_", "LANGFUSE_", "AZURE_", "OPENAI_")
 
+# The environment as it was before any test ran. Only the opt-in live tests read from it
+# (to get a real API key); everything else runs with the variables above removed.
+ORIGINAL_ENV = dict(os.environ)
+ORIGINAL_CWD = Path.cwd()
+
 
 @pytest.fixture(autouse=True)
 def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:

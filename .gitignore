@@ -221,3 +221,6 @@ __marimo__/
 
 # Local cvscore config (copy from cvscore.example.yaml)
 cvscore.yaml
+
+# Live test output
+live-out/

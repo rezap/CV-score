@@ -270,3 +270,31 @@ def word_style_cv_docx(path: Path) -> Path:
         doc.add_paragraph(text, style="List Bullet")
     doc.save(str(path))
     return path
+
+
+def marketing_cv_docx(path: Path) -> Path:
+    """A clearly non-matching CV for a data engineering role."""
+    doc = docx.Document()
+    doc.add_heading("Morgan Lee", 0)
+    doc.add_paragraph("morgan.lee@example.net | +44 161 496 0000 | Manchester")
+    doc.add_heading("Profile", 1)
+    doc.add_paragraph(
+        "Marketing coordinator with four years of experience planning events and social "
+        "media campaigns for consumer brands. I love telling stories and working with people."
+    )
+    doc.add_heading("Experience", 1)
+    doc.add_paragraph().add_run(
+        "Marketing Coordinator, Bright Events Ltd, 2021 - present"
+    ).bold = True
+    for text in [
+        "Organised 25 trade-show events per year with budgets up to 50,000 pounds.",
+        "Grew the company's Instagram following from 2,000 to 15,000 in two years.",
+    ]:
+        doc.add_paragraph(text, style="List Bullet")
+    doc.add_heading("Education", 1)
+    doc.add_paragraph("BA Communications, University of Exampleton, 2020")
+    doc.add_heading("Skills", 1)
+    for text in ["Canva, Hootsuite, Mailchimp", "Event planning, copywriting"]:
+        doc.add_paragraph(text, style="List Bullet")
+    doc.save(str(path))
+    return path

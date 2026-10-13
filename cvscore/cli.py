@@ -236,9 +236,7 @@ def run_cmd(
     config: ConfigOption = None,
 ) -> None:
     """Assess and rank every candidate against the job profile; write the report."""
-    from cvscore.graph import build_graph
     from cvscore.job import load_job_profile
-    from cvscore.report import write_report
 
     settings = _load(config)
     if forms is not None and form_key is None:
@@ -257,28 +255,14 @@ def run_cmd(
         typer.secho(f"No candidates found in {candidates}.", fg="red", err=True)
         raise typer.Exit(2)
 
+    from cvscore.service import assess_all, write_outputs
+
     llm = llm_provider(settings, out / ".cache" if cache else None)
-    tracer = Tracer.from_config(settings.langfuse)
-    run_id = f"{profile.id}-{_timestamp()}"
-    run_config = tracer.run_config(
-        run_id=run_id,
-        trace_name="assess-candidates",
-        tags=[f"job:{profile.id}"],
-        max_concurrency=settings.max_concurrency,
-    )
     typer.echo(f"Assessing {len(ingested.candidates)} candidates for '{profile.title}'...")
-    state = build_graph(llm, settings.ranking).invoke(
-        {"job": profile, "candidates": ingested.candidates, "identity": ingested.identity},
-        config=run_config,
-    )
-    tracer.flush()
-    ranked = state.get("ranked", [])
-    profiles = [a["profile"] for a in state.get("assessments", [])]
+    outcome = assess_all(profile, ingested, llm, settings)
+    write_outputs(out, profile, ingested, outcome, reveal_names=reveal_names)
+    ranked, run_id = outcome.ranked, outcome.run_id
     names = ingested.identity if reveal_names else None
-    write_report(out, profile, ranked, profiles, names)
-    (out / "identity_map.json").write_text(
-        json.dumps(ingested.identity, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
 
     for card in ranked:
         label = names.get(card.candidate_id, card.candidate_id) if names else card.candidate_id
@@ -289,6 +273,47 @@ def run_cmd(
         f"\nReport: {out / 'report.html'} (also ranking.csv, results.json). "
         f"Run id: {run_id}. Treat {out}/ as personal data."
     )
+
+
+@app.command()
+def serve(
+    root: Annotated[
+        Path | None,
+        typer.Option(
+            help="Folders under this one can be opened in the app (default: your home folder).",
+            file_okay=False,
+        ),
+    ] = None,
+    runs_dir: Annotated[
+        Path, typer.Option(help="Where runs (reports, cached model results) are stored.")
+    ] = Path("cvscore-runs"),
+    host: Annotated[str, typer.Option(help="Use 0.0.0.0 only on a trusted network.")] = (
+        "127.0.0.1"
+    ),
+    port: int = 8000,
+    config: ConfigOption = None,
+) -> None:
+    """Start the web app: pick a folder of applications, upload a job ad, get a ranking."""
+    import uvicorn
+
+    from cvscore.web.app import STATIC_DIR, create_app
+
+    root = root or Path.home()
+    if not root.is_dir():
+        typer.secho(f"Not a folder: {root}", fg="red", err=True)
+        raise typer.Exit(2)
+
+    def provider(settings: Settings, cache_dir: Path | None) -> LLMProvider:
+        return llm_provider(settings, cache_dir)
+
+    web = create_app(browse_root=root, runs_dir=runs_dir, config=config, provider=provider)
+    if not (STATIC_DIR / "index.html").is_file():
+        typer.secho(
+            "The front end is not built: run `npm install && npm run build` in frontend/.",
+            fg="yellow",
+        )
+    typer.echo(f"cvscore: http://{host}:{port}  (folders under {root.resolve()})")
+    uvicorn.run(web, host=host, port=port, log_level="warning")
 
 
 if __name__ == "__main__":

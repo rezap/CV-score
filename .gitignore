@@ -224,3 +224,9 @@ cvscore.yaml
 
 # Live test output
 live-out/
+
+# Web front end: dependencies and the build that `cvscore serve` serves
+frontend/node_modules/
+cvscore/web/static/
+# Runs from `cvscore serve` (reports and cached model results: personal data)
+cvscore-runs/

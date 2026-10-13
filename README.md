@@ -8,8 +8,9 @@ auth) or the OpenAI API (API key), and Langfuse for tracing. See [`docs/PLAN.md`
 and roadmap.
 
 > Status: early development. The full pipeline runs end to end (job profile, ingestion,
-> redaction, extraction, scoring, ranking, report). The agentic refinements (evidence
-> agent, pairwise judge, shortlist critic) are next; see the plan.
+> redaction, extraction, scoring, ranking, report), from the command line or a local web
+> app. The agentic refinements (evidence agent, pairwise judge, shortlist critic) are next;
+> see the plan.
 
 ## Setup
 
@@ -50,37 +51,74 @@ cvscore doctor          # show resolved config
 cvscore doctor --live   # call each deployment and Langfuse
 ```
 
+## Web app
+
+```bash
+cd frontend && npm install && npm run build && cd ..   # once (needs Node 18+)
+cvscore serve                                           # http://127.0.0.1:8000
+```
+
+1. **Applications:** browse to the folder with the applications and pick it. The app shows
+   how the files were grouped into candidates and what each document was taken for (CV,
+   cover letter, form), with the reason. Correct a type or leave a file out, then
+   "Apply changes".
+2. **Job:** upload the job ad (PDF, Word or text) or paste it. The model drafts a hiring
+   profile: must-haves, nice-to-haves, key skills, traits and score weights. Edit it. A
+   saved `job.yaml` can be uploaded instead.
+3. **Ranking:** shows progress, then the ranking with a score per dimension and flags. Click
+   a candidate for the requirement checks, reasons and quotes, and for the redacted text
+   the model saw. Download `report.html`, `ranking.csv` and `results.json`.
+
+Names are hidden (pseudonymous IDs) until you tick "Show names". Runs are kept in
+`cvscore-runs/` (personal data: keep it private), and model results are cached there, so
+re-running after changing weights costs nothing. Options: `--root` limits which folders
+can be opened (default: your home folder), `--port`, `--runs-dir`, `--config`. The app
+binds to 127.0.0.1; it reads your files, so don't expose it on a network you don't trust.
+
+For front-end development, run `cvscore serve` and `npm run dev` in `frontend/` (Vite
+proxies `/api` to port 8000).
+
 ## Reading candidate documents
 
-Put each candidate's files in their own folder:
+Point the tools at any folder of applications. The layout is worked out from the files:
 
 ```
-candidates/
-  Jane Doe/        cv.pdf  cover_letter.docx  form.json
-  Sam Roe/         resume.docx
+applications/                      applications/                 applications/
+  Jane Doe/  cv.pdf  letter.docx     Jane_Doe_CV.pdf               CVs/      a.pdf  b.pdf
+  Sam Roe/   resume.docx             Cover letter - Jane Doe.pdf   Letters/  1.pdf  2.pdf
+                                     CV_final.pdf  (Sam's)
+                                     application.docx  (Sam's)
 ```
 
 ```bash
-cvscore ingest candidates/ --out work/
+cvscore ingest applications/ --out work/
 ```
+
+- **What each document is** comes from its file name (`cv`, `resume`, `lebenslauf`,
+  `cover letter`, `søknad`, `anschreiben`, `form`, ...) and its content: section headings
+  and date ranges make a CV; a salutation, a closing ("Kind regards", "Med vennlig hilsen")
+  and paragraphs of prose make a letter. A file named "cv" that reads like a letter is
+  flagged. Identical copies are skipped.
+- **Whose it is:** the name at the top of a CV, the signature under a letter, a "Name"
+  answer in a form, the email address, and the file name. Files that share a name, an
+  email, or a file name (minus words like "CV", "cover letter", "final", "v2") are one
+  candidate. A folder holding one person's documents is one candidate; a folder named after
+  a person is never merged with another person's folder. Two CVs that disagree on name and
+  email are never merged.
+- **Formats:** PDF, DOCX, TXT/MD; `.doc`, `.rtf` and `.odt` if LibreOffice is installed.
+  Scanned PDFs (no text layer) are flagged, not OCR'd.
+- **Application forms:** JSON/YAML (`{"question": "answer"}` or a list of
+  `{question, answer}`) or CSV next to the candidate's files, or one export for everyone
+  with `--forms export.csv --form-key <column with the folder or candidate name>`.
+- **Manifest:** to set everything explicitly, `--manifest manifest.csv` with
+  `candidate,cv,cover_letter,form` columns.
 
 This writes one JSON file per candidate to `work/candidates/`, named by a pseudonymous ID
 (`c-…`), with the text, its structure (headings, list items, sections, pages), a quality
-score, and warnings, e.g. for scanned PDFs. `work/identity_map.json` maps IDs back to folder
-names. Treat the whole `work/` folder as personal data: the JSON files hold the full
-document text, with contact details flagged (`is_contact`); `cvscore run` removes them
-before anything is sent to a model.
-
-- **Formats:** PDF, DOCX, TXT/MD; `.doc`, `.rtf` and `.odt` if LibreOffice is installed.
-  Scanned PDFs (no text layer) are flagged, not OCR'd.
-- **Document type** comes from the file name (`cv`, `resume`, `lebenslauf`, `cover_letter`,
-  `anschreiben`, `form`, ...). A single unnamed document in a folder is taken as the CV.
-- **Other layouts:** files directly in `candidates/` named `<who>_cv.pdf`,
-  `<who>_cover_letter.docx`; or `--manifest manifest.csv` with `candidate,cv,cover_letter,form`
-  columns.
-- **Application forms:** JSON/YAML (`{"question": "answer"}` or a list of
-  `{question, answer}`) or CSV in the candidate's folder, or one export for everyone with
-  `--forms export.csv --form-key <column matching the folder name>`.
+score, and warnings. `work/identity_map.json` maps IDs back to names. Treat the whole
+`work/` folder as personal data: the JSON files hold the full document text, with contact
+details flagged (`is_contact`); `cvscore run` removes them before anything is sent to a
+model.
 
 ## Assessing candidates
 
@@ -93,8 +131,10 @@ cvscore run --job job.yaml --candidates candidates/ --out out/   # 3. assess and
 For each candidate, `run`:
 
 1. reads the documents (as `ingest` does);
-2. **redacts** them: contact details, the name (from the folder name), and lines such as
-   date of birth or nationality are removed before any model sees the text;
+2. **redacts** them before any model sees the text: contact details, the candidate's name
+   (as found in the documents, the folder or file name), and lines such as date of birth
+   or nationality are replaced by visible markers such as `[REDACTED: name]` and
+   `[REDACTED: contact details]`;
 3. **extracts** a structured profile (roles, dates, achievements, skills), computing years
    of experience itself;
 4. **scores** it against the profile with a fixed 1-5 rubric: must-have and nice-to-have
@@ -157,4 +197,5 @@ The same checks CI runs (prefix each with `uv run` if you use uv):
 
 ```bash
 ruff check . && ruff format --check . && mypy cvscore && pytest
+cd frontend && npm ci && npm run build   # front end: type-check and build
 ```

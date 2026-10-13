@@ -117,6 +117,9 @@ one free-roaming agent. The design is a **LangGraph state graph**:
 - Runs **before scoring**. It masks name, gender markers, age / date of birth,
   nationality, photo, address and marital status (rules + Presidio), and the identity
   mapping is kept outside the graph state that scorers see.
+- Removed text is replaced by visible markers (`[REDACTED: name]`,
+  `[REDACTED: contact details]`, ...), so reviewers and models see that something was
+  there.
 - The same masking is applied to Langfuse traces (Langfuse `mask` function), so PII is
   not stored in the observability backend.
 
@@ -171,7 +174,11 @@ For each candidate, run in parallel with the LangGraph `Send` API and concurrenc
   - `cvscore report out/`
 - **Python API:** `build_graph(config)` returns a compiled LangGraph, for use from notebooks and integrations.
 - **Checkpointing:** SQLite checkpointer locally (Postgres later), so long runs can be resumed and HITL steps can pause for days.
-- Optional later: LangGraph Studio for visual debugging, and a small Streamlit review UI.
+- **Web app** ✅ (`cvscore serve`): FastAPI back end (`cvscore.web`) and React front end
+  (`frontend/`): browse to a folder, check how files were grouped into candidates, upload
+  the job ad and edit the drafted profile, follow progress, read the ranking with
+  evidence and the redacted text each model saw.
+- Optional later: LangGraph Studio for visual debugging.
 
 ## 4. Azure AI Foundry integration (`cvscore.llm`)
 

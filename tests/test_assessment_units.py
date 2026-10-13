@@ -29,7 +29,7 @@ from cvscore.models import (
     Trait,
 )
 from cvscore.rank import rank, total_score
-from cvscore.redact import redact
+from cvscore.redact import redact, redact_blocks
 from cvscore.score import ScoringDraft, score_candidate, skill_coverage, to_unit
 from tests.fakes import FakeLLM
 
@@ -96,12 +96,19 @@ def test_redact() -> None:
             doc(DocType.OTHER, [TextBlock(kind=BlockKind.PARAGRAPH, text="x", is_contact=True)]),
         ],
     )
-    out = redact(cand, "Jane Doe")
+    out = redact(cand, ["Jane Doe"])
     assert out[DocType.CV] == (
-        "## Experience\n\n- [CANDIDATE] led 5 engineers; mail [EMAIL] or [PHONE]"
+        "[REDACTED: contact details]\n\n[REDACTED: personal details]\n\n## Experience\n\n"
+        "- [REDACTED: name] led 5 engineers; mail [REDACTED: email] or [REDACTED: phone]"
     )
-    assert out[DocType.COVER_LETTER] == "Kind regards, [CANDIDATE] [CANDIDATE]"
-    assert DocType.OTHER not in out  # nothing left after redaction
+    assert out[DocType.COVER_LETTER] == "Kind regards, [REDACTED: name]"
+    assert DocType.OTHER not in out  # nothing left but markers
+
+
+def test_redact_name_only_when_capitalised() -> None:
+    block = TextBlock(kind=BlockKind.PARAGRAPH, text="Mark set a high-water mark; MARK it.")
+    out = redact_blocks([block], ["Mark Olsen"])
+    assert out[0].text == "[REDACTED: name] set a high-water mark; [REDACTED: name] it."
 
 
 # --- extraction -----------------------------------------------------------------------

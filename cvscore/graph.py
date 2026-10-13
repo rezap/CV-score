@@ -45,6 +45,7 @@ class PipelineState(TypedDict, total=False):
     job: JobProfile
     candidates: list[CandidateDocuments]
     identity: dict[str, str]
+    names: dict[str, list[str]]  # candidate_id -> names to redact (default: the identity)
     assessments: Annotated[list[Assessment], operator.add]
     ranked: list[ScoreCard]
 
@@ -52,17 +53,17 @@ class PipelineState(TypedDict, total=False):
 class CandidateTask(TypedDict):
     job: JobProfile
     candidate: CandidateDocuments
-    name_label: str | None
+    names: list[str]
 
 
 def assess_candidate(
     job: JobProfile,
     candidate: CandidateDocuments,
-    name_label: str | None,
+    names: list[str],
     llm: LLMProvider,
     config: RunnableConfig | None = None,
 ) -> Assessment:
-    docs = redact(candidate, name_label)
+    docs = redact(candidate, names)
     notes = [f"Could not read {e}" for e in candidate.errors]
     low_quality = [d.path for d in candidate.documents if d.quality < LOW_QUALITY]
     if low_quality:
@@ -87,20 +88,22 @@ def assess_candidate(
 def build_graph(llm: LLMProvider, ranking: RankingConfig) -> CompiledStateGraph[Any, Any, Any, Any]:
     def fan_out(state: PipelineState) -> list[Send]:
         identity = state.get("identity", {})
+        names = state.get("names", {})
         return [
             Send(
                 "assess",
                 CandidateTask(
                     job=state["job"],
                     candidate=c,
-                    name_label=identity.get(c.candidate_id),
+                    names=names.get(c.candidate_id)
+                    or [n for n in [identity.get(c.candidate_id)] if n],
                 ),
             )
             for c in state["candidates"]
         ]
 
     def assess(task: CandidateTask, config: RunnableConfig) -> dict[str, list[Assessment]]:
-        result = assess_candidate(task["job"], task["candidate"], task["name_label"], llm, config)
+        result = assess_candidate(task["job"], task["candidate"], task["names"], llm, config)
         return {"assessments": [result]}
 
     def rank_node(state: PipelineState) -> dict[str, list[ScoreCard]]:

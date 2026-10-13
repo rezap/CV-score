@@ -98,3 +98,25 @@ def test_structured_output_request(endpoint: str, tmp_path: Path) -> None:
     # Same request again: answered from the cache, no HTTP call.
     assert llm.generate(JobProfileDraft, messages, None) == result
     assert len(FakeAzure.requests) == 1
+
+
+def test_v1_endpoint_request(endpoint: str) -> None:
+    config = AzureConfig(
+        endpoint=f"{endpoint}/openai/v1",
+        models={ModelRole.AGENT: ChatModelConfig(deployment="gpt-5.6-terra")},
+        max_retries=0,
+    )
+    tokens = iter(["token-1", "token-2"])
+    model = get_chat_model(ModelRole.AGENT, config, token_provider=lambda: next(tokens))
+    llm = ChatModelLLM(model, model_id="azure:gpt-5.6-terra")
+    messages = [SystemMessage("system"), HumanMessage("job ad")]
+
+    assert llm.generate(JobProfileDraft, messages, None) == JobProfileDraft.model_validate(DRAFT)
+    assert llm.generate(JobProfileDraft, messages, None) == JobProfileDraft.model_validate(DRAFT)
+    first, second = FakeAzure.requests
+    assert first["path"] == "/openai/v1/chat/completions"  # no deployment path, no api-version
+    assert first["body"]["model"] == "gpt-5.6-terra"
+    assert "temperature" not in first["body"]  # a reasoning model
+    assert first["body"]["response_format"]["json_schema"]["strict"] is True
+    # The Entra ID token is fetched again for each request, so it never goes stale.
+    assert (first["auth"], second["auth"]) == ("Bearer token-1", "Bearer token-2")

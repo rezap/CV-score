@@ -10,8 +10,11 @@ provider: azure
 # role on the Azure OpenAI / AI Services resource.
 
 azure:
-  endpoint: https://<your-resource>.openai.azure.com
-  api_version: "2024-10-21"
+  # Either style works:
+  #   https://<your-resource>.openai.azure.com/openai/v1   v1 API (no api_version needed)
+  #   https://<your-resource>.openai.azure.com             classic API, uses api_version
+  endpoint: https://<your-resource>.openai.azure.com/openai/v1
+  api_version: "2024-10-21"   # classic API only
   models:
     # Deployment names from your Foundry project. Roles you leave out reuse `scorer`.
     extractor:
@@ -22,8 +25,7 @@ azure:
       deployment: <tool-calling-deployment>
     judge:
       deployment: <strongest-deployment>
-      # For reasoning models, disable temperature and set an effort instead:
-      # temperature: null
+      # Reasoning models (o-series, gpt-5 and later) get no temperature unless you set one.
       # reasoning_effort: medium
   embeddings:
     deployment: <embedding-deployment>

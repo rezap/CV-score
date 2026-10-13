@@ -39,7 +39,9 @@ To use the tool against your own services, copy `cvscore.example.yaml` to `cvsco
 and `.env.example` to `.env` (Langfuse keys), then pick a provider:
 
 - **Azure AI Foundry** (`provider: azure`): fill in the endpoint and deployment names and
-  run `az login`. Your identity needs the **Cognitive Services OpenAI User** role on the
+  run `az login`. The endpoint can be the v1 API (`https://<resource>.openai.azure.com/openai/v1`)
+  or the resource itself (`https://<resource>.openai.azure.com`, classic API with
+  `api_version`). Your identity needs the **Cognitive Services OpenAI User** role on the
   Azure resource behind your Foundry project.
 - **OpenAI** (`provider: openai`): fill in model names and set `OPENAI_API_KEY` in the
   environment or in `.env`. The key is never read from `cvscore.yaml`.

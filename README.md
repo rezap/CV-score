@@ -122,6 +122,12 @@ cvscore ingest applications/ --out work/
   is read once. OCR'd documents carry a warning to check
   names and numbers against the original. Switch it off with `ocr.enabled: false` or
   `--no-ocr`.
+- **Caching:** extracted text is cached in the output folder's `.cache/` (the web app's
+  `cvscore-runs/.cache/`), keyed by each file's content and the extractor version, so a
+  folder is parsed once: rescanning, screening and running again reuse it, and a changed
+  file or an upgraded extractor is read again. Model results (including OCR) and
+  embeddings are cached there too. The cache holds the full text: treat it as personal
+  data.
 - **When a file is read badly:** `cvscore inspect cv.pdf` shows what was read: the
   document type and why, the name found, a quality score, warnings, and the text block by
   block (`--redacted` shows it as the models see it).

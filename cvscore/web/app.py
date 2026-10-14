@@ -32,6 +32,7 @@ from pydantic import BaseModel, ValidationError
 
 from cvscore.config import ModelRole, Provider, Settings, load_settings
 from cvscore.ingest import ExtractionError, extract_file
+from cvscore.ingest.cache import cached_extractor
 from cvscore.ingest.discovery import (
     OCR,
     SUPPORTED_SUFFIXES,
@@ -39,6 +40,7 @@ from cvscore.ingest.discovery import (
     is_candidate_file,
 )
 from cvscore.ingest.ocr import ocr_hook
+from cvscore.ingest.pipeline import extract_document
 from cvscore.job import draft_job_profile
 from cvscore.llm.structured import LLMProvider, settings_provider
 from cvscore.models import DocType, JobProfile
@@ -207,7 +209,11 @@ def create_app(
     def scan(request: ScanRequest) -> ScanResult:
         folder = inside_root(request.folder)
         sources = discover_folder(
-            folder, overrides=request.overrides, exclude=request.exclude, ocr=scan_ocr()
+            folder,
+            cached_extractor(extract_document, runs_dir / ".cache"),
+            overrides=request.overrides,
+            exclude=request.exclude,
+            ocr=scan_ocr(),
         )
         return ScanResult(folder=str(folder), candidates=[summarize(s) for s in sources])
 

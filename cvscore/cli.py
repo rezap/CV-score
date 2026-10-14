@@ -312,6 +312,12 @@ def run_cmd(
     cache: Annotated[
         bool, typer.Option(help="Reuse model results from earlier runs (out/.cache).")
     ] = True,
+    shortlist: Annotated[
+        int | None,
+        typer.Option(
+            help="Screen everyone first (no chat model), then assess only the best N in depth."
+        ),
+    ] = None,
     ocr: OcrOption = True,
     config: ConfigOption = None,
 ) -> None:
@@ -340,10 +346,13 @@ def run_cmd(
         typer.secho(f"No candidates found in {candidates}.", fg="red", err=True)
         raise typer.Exit(2)
 
-    from cvscore.service import assess_all, write_outputs
+    from cvscore.service import assess_all, make_embedder, write_outputs
 
-    typer.echo(f"Assessing {len(ingested.candidates)} candidates for '{profile.title}'...")
-    outcome = assess_all(profile, ingested, llm, settings)
+    n = len(ingested.candidates)
+    target = f"the best {min(shortlist, n)} of {n}" if shortlist is not None else str(n)
+    typer.echo(f"Assessing {target} candidates for '{profile.title}'...")
+    embed = make_embedder(settings, out / ".cache" if cache else None)
+    outcome = assess_all(profile, ingested, llm, settings, shortlist=shortlist, embed=embed)
     write_outputs(out, profile, ingested, outcome, reveal_names=reveal_names)
     ranked, run_id = outcome.ranked, outcome.run_id
     names = ingested.identity if reveal_names else None
@@ -398,6 +407,64 @@ def serve(
         )
     typer.echo(f"cvscore: http://{host}:{port}  (folders under {root.resolve()})")
     uvicorn.run(web, host=host, port=port, log_level="warning")
+
+
+@app.command("screen")
+def screen_cmd(
+    job: Annotated[
+        Path, typer.Option(help="Job profile YAML (from `cvscore job draft`).", exists=True)
+    ],
+    candidates: Annotated[
+        Path, typer.Option(help="Candidates folder.", exists=True, file_okay=False)
+    ],
+    out: Annotated[Path, typer.Option("--out", "-o", help="Output folder.")] = Path("screen"),
+    manifest: Annotated[Path | None, typer.Option(exists=True)] = None,
+    semantic: Annotated[
+        bool,
+        typer.Option(help="Also match by meaning with the embeddings model, if configured."),
+    ] = True,
+    reveal_names: Annotated[
+        bool, typer.Option(help="Show names in the output instead of pseudonymous IDs.")
+    ] = False,
+    ocr: OcrOption = True,
+    config: ConfigOption = None,
+) -> None:
+    """Fast, cheap screening: search the CVs for the job's screening criteria (keywords,
+    and meaning with embeddings) without a chat model reading them. Scanned CVs still need
+    OCR. Edit the criteria under `screening:` in the job YAML."""
+    from cvscore.job import load_job_profile
+    from cvscore.report import write_screening
+    from cvscore.service import make_embedder, screen
+
+    settings = _load(config)
+    try:
+        profile = load_job_profile(job)
+        ingested = ingest(candidates, manifest=manifest, ocr=_ocr_hook(config, out / ".cache", ocr))
+    except (ExtractionError, ValueError) as e:
+        typer.secho(str(e), fg="red", err=True)
+        raise typer.Exit(2) from e
+    if not ingested.candidates:
+        typer.secho(f"No candidates found in {candidates}.", fg="red", err=True)
+        raise typer.Exit(2)
+    embed = make_embedder(settings, out / ".cache") if semantic else None
+    results = screen(profile, ingested, settings, embed)
+    names = ingested.identity if reveal_names else None
+    write_screening(out, profile, results, names)
+    (out / "identity_map.json").write_text(
+        json.dumps(ingested.identity, indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    mode = "keywords and meaning" if embed else "keywords"
+    typer.echo(f"Screened {len(results)} candidates for '{profile.title}' ({mode}):")
+    for r in results:
+        label = names.get(r.candidate_id, r.candidate_id) if names else r.candidate_id
+        score = "n/a" if r.score is None else f"{round(r.score * 100)}"
+        out_note = "  [screened out]" if r.screened_out else ""
+        matched = ", ".join(t for c in r.criteria for t in c.matched[:2])
+        typer.echo(f"{r.rank:>3}. {label:<30} {score:>4}{out_note}  {matched[:70]}")
+    typer.echo(
+        f"\nReport: {out / 'screening.html'} (also screening.csv, screening.json). "
+        f"Treat {out}/ as personal data."
+    )
 
 
 if __name__ == "__main__":

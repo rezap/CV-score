@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from cvscore.config import ModelRole
 from cvscore.llm.structured import LLMProvider
-from cvscore.models import DEFAULT_WEIGHTS, JobProfile, Requirement, Trait
+from cvscore.models import DEFAULT_WEIGHTS, JobProfile, Requirement, ScreeningCriterion, Trait
 from cvscore.prompts import JOB_PROFILE_SYSTEM
 
 # --- Model-facing schema (strict: all fields required, no defaults) -------------------
@@ -34,6 +34,13 @@ class _Trait(BaseModel):
     evidence_examples: list[str]
 
 
+class _Screening(BaseModel):
+    name: str
+    terms: list[str]
+    required: bool
+    importance: Literal["low", "medium", "high"]
+
+
 class JobProfileDraft(BaseModel):
     title: str
     seniority: str | None
@@ -44,6 +51,7 @@ class JobProfileDraft(BaseModel):
     nice_to_have: list[_NiceToHave]
     key_skills: list[str]
     traits: list[_Trait]
+    screening: list[_Screening]
 
 
 _IMPORTANCE_WEIGHT = {"low": 0.5, "medium": 1.0, "high": 2.0}
@@ -84,7 +92,38 @@ def from_draft(draft: JobProfileDraft) -> JobProfile:
             for i, t in enumerate(draft.traits, 1)
         ],
         weights=dict(DEFAULT_WEIGHTS),
+        screening=[
+            ScreeningCriterion(
+                id=f"S{i}",
+                name=c.name,
+                terms=_unique(c.terms),
+                required=c.required,
+                weight=_IMPORTANCE_WEIGHT[c.importance],
+            )
+            for i, c in enumerate(draft.screening, 1)
+            if c.terms
+        ]
+        or screening_from_skills(draft.key_skills),
     )
+
+
+def _unique(terms: list[str]) -> list[str]:
+    seen: dict[str, str] = {}
+    for t in terms:
+        t = t.strip()
+        if t and t.lower() not in seen:
+            seen[t.lower()] = t
+    return list(seen.values())
+
+
+def screening_from_skills(key_skills: list[str]) -> list[ScreeningCriterion]:
+    """Fallback screening (e.g. for a job.yaml written before screening existed): one
+    criterion per key skill, none required."""
+    return [
+        ScreeningCriterion(id=f"S{i}", name=skill, terms=[skill])
+        for i, skill in enumerate(key_skills, 1)
+        if skill.strip()
+    ]
 
 
 def draft_job_profile(

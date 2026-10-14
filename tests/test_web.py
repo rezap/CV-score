@@ -193,3 +193,34 @@ def test_scan_reads_scanned_cvs_with_ocr(client: TestClient, root: Path, fake: F
     assert cv["doc_type"] == "cv" and cv["names"] == ["Sam Roe"]
     assert any(w.startswith("Read by OCR") for w in cv["warnings"])
     assert any(schema is PageTranscript for _, schema, _ in fake.calls)
+
+
+def test_quick_screen_run(client: TestClient, root: Path, fake: FakeLLM) -> None:
+    profile = client.post("/api/job", data={"text": JOB_AD}).json()["profile"]
+    assert profile["screening"][0]["required"] is True
+    calls = len(fake.calls)
+    started = client.post(
+        "/api/runs", json={"folder": str(root), "job": profile, "mode": "screen"}
+    ).json()
+    assert started["mode"] == "screen"
+    data = wait_for(client, started["id"])
+    assert data["meta"]["status"] == "done", data["meta"]
+    assert data["results"] is None
+    screened = data["screening"]["candidates"]
+    assert [data["identity"][c["candidate_id"]] for c in screened][0] == "Jane Example"
+    # No chat model read the CVs (only OCR of the blank scan).
+    assert {schema for _, schema, _ in fake.calls[calls:]} <= {PageTranscript}
+    assert client.get(f"/api/runs/{started['id']}/files/screening.html").status_code == 200
+
+
+def test_full_run_with_shortlist(client: TestClient, root: Path) -> None:
+    profile = client.post("/api/job", data={"text": JOB_AD}).json()["profile"]
+    started = client.post(
+        "/api/runs", json={"folder": str(root), "job": profile, "shortlist": 1}
+    ).json()
+    data = wait_for(client, started["id"])
+    assert data["meta"]["status"] == "done" and data["meta"]["shortlist"] == 1
+    cards = [c["score_card"] for c in data["results"]["candidates"]]
+    assert cards[0]["total"] is not None
+    assert all(c["total"] is None for c in cards[1:])
+    assert len(data["screening"]["candidates"]) == 3

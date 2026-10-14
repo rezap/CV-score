@@ -19,6 +19,8 @@ export function App() {
   const [job, setJob] = useState<JobProfile | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [runError, setRunError] = useState<string | null>(null);
+  const [mode, setMode] = useState<"screen" | "shortlist" | "all">("screen");
+  const [shortlist, setShortlist] = useState(10);
   const [history, setHistory] = useState<RunMeta[]>([]);
 
   useEffect(() => {
@@ -44,9 +46,17 @@ export function App() {
       ...job,
       must_have: job.must_have.filter((r) => r.description.trim()),
       nice_to_have: job.nice_to_have.filter((r) => r.description.trim()),
+      screening: (job.screening ?? []).filter((c) => c.name.trim() && c.terms.length),
     };
     api
-      .startRun(folder, cleaned, overrides, exclude)
+      .startRun(
+        folder,
+        cleaned,
+        overrides,
+        exclude,
+        mode === "screen" ? "screen" : "full",
+        mode === "shortlist" ? shortlist : null,
+      )
       .then((meta) => {
         setRunId(meta.id);
         setHistory((h) => [meta, ...h.filter((m) => m.id !== meta.id)]);
@@ -174,11 +184,43 @@ export function App() {
               ? "Pick a folder first."
               : !job
                 ? "Add the job first."
-                : `Assess ${usable.length} candidates against "${job.title}".`}
+                : `${usable.length} candidates for "${job.title}".`}
           </span>
           <button className="primary" disabled={!candidates || !job || !usable.length} onClick={start}>
-            Rank candidates
+            {mode === "screen" ? "Screen candidates" : "Rank candidates"}
           </button>
+        </div>
+        <div className="modes">
+          <label>
+            <input type="radio" checked={mode === "screen"} onChange={() => setMode("screen")} />{" "}
+            <b>Quick screen</b>{" "}
+            <span className="muted small">
+              keyword (and meaning) search for the screening criteria; seconds, no model reads
+              the CVs
+            </span>
+          </label>
+          <label>
+            <input
+              type="radio"
+              checked={mode === "shortlist"}
+              onChange={() => setMode("shortlist")}
+            />{" "}
+            <b>Screen, then assess the best</b>{" "}
+            <input
+              type="number"
+              className="num"
+              min={1}
+              value={shortlist}
+              onChange={(e) => setShortlist(Math.max(1, Number(e.target.value)))}
+              onFocus={() => setMode("shortlist")}
+            />{" "}
+            <span className="muted small">in depth (2 model calls each)</span>
+          </label>
+          <label>
+            <input type="radio" checked={mode === "all"} onChange={() => setMode("all")} />{" "}
+            <b>Assess everyone in depth</b>{" "}
+            <span className="muted small">{usable.length * 2} model calls</span>
+          </label>
         </div>
         {runError && <p className="error">{runError}</p>}
         {runId && <RunView runId={runId} showNames={showNames} />}
@@ -192,7 +234,13 @@ export function App() {
                     {m.job_title}
                   </button>{" "}
                   <span className="muted small">
-                    {m.created.replace("T", " ").slice(0, 16)} · {m.status} · {m.folder}
+                    {m.created.replace("T", " ").slice(0, 16)} ·{" "}
+                    {m.mode === "screen"
+                      ? "screen"
+                      : m.shortlist
+                        ? `best ${m.shortlist} in depth`
+                        : "in depth"}{" "}
+                    · {m.status} · {m.folder}
                   </span>
                 </li>
               ))}

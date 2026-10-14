@@ -25,6 +25,7 @@ DRAFT = {
     "nice_to_have": [],
     "key_skills": ["Python"],
     "traits": [],
+    "screening": [],
 }
 
 

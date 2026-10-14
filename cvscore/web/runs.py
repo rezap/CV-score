@@ -16,14 +16,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from cvscore.config import Settings
 from cvscore.ingest import ingest
 from cvscore.ingest.ocr import ocr_hook
+from cvscore.job import save_job_profile
 from cvscore.llm.structured import LLMProvider
 from cvscore.models import DocType, JobProfile
-from cvscore.service import assess_all, timestamp, write_outputs
+from cvscore.report import write_screening
+from cvscore.service import assess_all, make_embedder, screen, timestamp, write_outputs
 from cvscore.web.schemas import CandidateSummary, summarize
 
 Status = Literal["reading", "assessing", "done", "failed"]
@@ -32,6 +34,8 @@ Status = Literal["reading", "assessing", "done", "failed"]
 class RunMeta(BaseModel):
     id: str
     status: Status
+    mode: Literal["full", "screen"] = "full"
+    shortlist: int | None = None
     created: str
     folder: str
     job_title: str
@@ -45,6 +49,10 @@ class RunRequest(BaseModel):
     job: JobProfile
     overrides: dict[str, DocType] = {}
     exclude: list[str] = []
+    # "screen": fast keyword/semantic screening only, no chat model reads the CVs.
+    # "full": screening, then the in-depth assessment (of the best `shortlist`, if set).
+    mode: Literal["full", "screen"] = "full"
+    shortlist: int | None = Field(default=None, ge=1)
 
 
 ProviderFactory = Callable[[Settings, Path | None], LLMProvider]
@@ -107,6 +115,7 @@ class RunManager:
             "results": load("results.json", None),
             "identity": load("identity_map.json", {}),
             "candidates": load("candidates.json", []),
+            "screening": load("screening.json", None),
         }
 
     def redacted(self, run_id: str) -> dict[str, dict[str, str]]:
@@ -131,6 +140,8 @@ class RunManager:
             created=datetime.now(UTC).isoformat(timespec="seconds"),
             folder=request.folder,
             job_title=request.job.title,
+            mode=request.mode,
+            shortlist=request.shortlist if request.mode == "full" else None,
         )
         self._save(out, meta)
         self._pool.submit(self._run, out, meta, request, settings)
@@ -160,10 +171,27 @@ class RunManager:
                 meta.done, meta.total = done, total
                 self._save(out, meta)
 
-            outcome = assess_all(
-                request.job, ingested, llm, settings, run_id=meta.id, on_progress=progress
-            )
-            write_outputs(out, request.job, ingested, outcome)
+            embed = make_embedder(settings, cache_dir)
+            if request.mode == "screen":
+                results = screen(request.job, ingested, settings, embed)
+                write_screening(out, request.job, results)
+                save_job_profile(request.job, out / "job.yaml")
+                (out / "identity_map.json").write_text(
+                    json.dumps(ingested.identity, indent=2, ensure_ascii=False), "utf-8"
+                )
+                meta.done = meta.total
+            else:
+                outcome = assess_all(
+                    request.job,
+                    ingested,
+                    llm,
+                    settings,
+                    run_id=meta.id,
+                    on_progress=progress,
+                    shortlist=request.shortlist,
+                    embed=embed,
+                )
+                write_outputs(out, request.job, ingested, outcome)
             meta.status = "done"
         except Exception as e:  # noqa: BLE001 - shown to the user in the app
             meta.status, meta.error = "failed", f"{type(e).__name__}: {e}"

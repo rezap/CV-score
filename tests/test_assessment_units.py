@@ -224,6 +224,15 @@ def job_draft() -> dict[str, Any]:
         "traits": [
             {"name": "Mentoring", "definition": "Helps others grow.", "evidence_examples": []}
         ],
+        "screening": [
+            {
+                "name": "Data programming",
+                "terms": ["Python", "SQL", "python", " ", "Scala"],
+                "required": True,
+                "importance": "high",
+            },
+            {"name": "Nothing to search", "terms": [], "required": False, "importance": "low"},
+        ],
     }
 
 
@@ -236,6 +245,14 @@ def test_job_profile_draft_and_yaml_round_trip(tmp_path: Path) -> None:
     assert [(r.id, r.weight) for r in job.nice_to_have] == [("N1", 2.0), ("N2", 0.5)]
     assert job.traits[0].id == "T1"
     assert job.weights[Dimension.TRAITS] == 0.0
+    # Duplicate and blank terms dropped; a criterion without terms is left out.
+    [criterion] = job.screening
+    assert (criterion.id, criterion.terms, criterion.required, criterion.weight) == (
+        "S1",
+        ["Python", "SQL", "Scala"],
+        True,
+        2.0,
+    )
     path = tmp_path / "job.yaml"
     save_job_profile(job, path)
     assert path.read_text().startswith("# Hiring profile")
@@ -381,3 +398,14 @@ def test_rank_orders_and_flags() -> None:
 
     excluded = rank([better_but_ko], job, RankingConfig(knockout="exclude"))
     assert excluded[0].total is None
+
+
+def test_screening_falls_back_to_key_skills() -> None:
+    draft = {**job_draft(), "screening": []}
+    job = draft_job_profile("ad", FakeLLM({JobProfileDraft: lambda _: draft}).provider())
+    assert [(c.name, c.terms, c.required) for c in job.screening] == [
+        ("Python", ["Python"], False),
+        ("SQL", ["SQL"], False),
+        ("Apache Spark", ["Apache Spark"], False),
+        ("Kafka", ["Kafka"], False),
+    ]

@@ -59,6 +59,38 @@ export interface Trait {
   weight: number;
 }
 
+export interface ScreeningCriterion {
+  id: string;
+  name: string;
+  terms: string[];
+  required: boolean;
+  weight: number;
+}
+
+export interface CriterionResult {
+  id: string;
+  name: string;
+  required: boolean;
+  weight: number;
+  score: number;
+  keyword_score: number;
+  semantic_score: number | null;
+  matched: string[];
+  snippets: string[];
+}
+
+export interface ScreenResult {
+  candidate_id: string;
+  score: number | null;
+  rank: number | null;
+  screened_out: boolean;
+  criteria: CriterionResult[];
+  years_hint: number | null;
+  notes: string[];
+}
+
+export type RunMode = "screen" | "full";
+
 export type Dimension = "requirements" | "experience" | "skills" | "achievements" | "traits";
 
 export interface JobProfile {
@@ -73,6 +105,7 @@ export interface JobProfile {
   key_skills: string[];
   traits: Trait[];
   weights: Record<Dimension, number>;
+  screening: ScreeningCriterion[];
 }
 
 export interface Evidence {
@@ -122,6 +155,8 @@ export interface ScoreCard {
 export interface RunMeta {
   id: string;
   status: "reading" | "assessing" | "done" | "failed";
+  mode: RunMode;
+  shortlist: number | null;
   created: string;
   folder: string;
   job_title: string;
@@ -138,6 +173,7 @@ export interface RunData {
   } | null;
   identity: Record<string, string>;
   candidates: CandidateSummary[];
+  screening: { criteria: ScreeningCriterion[]; candidates: ScreenResult[] } | null;
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
@@ -184,7 +220,13 @@ export const api = {
     job: JobProfile,
     overrides: Record<string, DocType>,
     exclude: string[],
-  ) => request<RunMeta>("/api/runs", json({ folder, job, overrides, exclude })),
+    mode: RunMode,
+    shortlist: number | null,
+  ) =>
+    request<RunMeta>(
+      "/api/runs",
+      json({ folder, job, overrides, exclude, mode, shortlist: mode === "full" ? shortlist : null }),
+    ),
   runs: () => request<RunMeta[]>("/api/runs"),
   run: (id: string) => request<RunData>(`/api/runs/${encodeURIComponent(id)}`),
   redacted: (id: string, candidate: string) =>

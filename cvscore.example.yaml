@@ -64,6 +64,14 @@ ocr:
   dpi: 150
   max_pages: 6
 
+screening:
+  # Semantic matching uses the embeddings model (azure.embeddings / openai.embeddings);
+  # without one, screening uses keywords only.
+  semantic: true
+  similarity_floor: 0.25   # cosine similarity that counts as no match
+  similarity_full: 0.55    # ... and as a full (semantic) match
+  required_semantic: 0.6   # a required criterion without keywords passes above this
+
 ranking:
   knockout: flag          # flag | exclude: what happens when a must-have is clearly not met
   low_confidence: 0.5     # flag scores whose confidence is below this

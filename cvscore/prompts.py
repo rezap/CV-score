@@ -7,7 +7,7 @@ and score cards record which prompt produced them.
 from __future__ import annotations
 
 PROMPT_VERSIONS = {
-    "job_profile": "1",
+    "job_profile": "2",
     "candidate_profile": "2",
     "scoring": "1",
 }
@@ -27,6 +27,17 @@ CV or cover letter could contain. Do not invent traits the ad does not mention.
 - Never include requirements about age, gender, nationality, ethnicity, religion, \
 disability, marital status or appearance, even if the ad mentions them.
 - Use the ad's language for titles and skills; write definitions in English.
+- screening: 4-10 criteria for a fast keyword search of CVs, before any detailed \
+reading. Use the ad and your general knowledge of the field. Each criterion is one \
+competence (e.g. "Programming for data analysis", "Statistics", "Cloud ML platforms") \
+with 5-20 terms a CV would use to show it: tools, synonyms, abbreviations, spelling \
+variants, and the same terms in English and in the ad's language (e.g. "statistics", \
+"statistikk", "statistical modelling", "regression", "Python", "R", "pandas"). Terms are \
+short words or phrases as they appear in CVs, not sentences. Mark required=true only \
+when practically every qualified candidate's CV would mention at least one of the terms \
+(e.g. a programming language for a data scientist); be conservative, as required \
+criteria screen CVs out. Never use terms about age, gender, nationality or other \
+protected attributes.
 """
 
 CANDIDATE_PROFILE_SYSTEM = """\

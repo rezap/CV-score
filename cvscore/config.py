@@ -152,6 +152,19 @@ class OCRConfig(BaseModel):
     max_pages: int = 6  # per document
 
 
+class ScreeningConfig(BaseModel):
+    """Fast screening (``cvscore screen``, ``run --shortlist``): keywords, plus semantic
+    search when an embeddings model is configured."""
+
+    semantic: bool = True
+    # Cosine similarity of a criterion to the closest CV passage that counts as no match
+    # (floor) and as a full match (full); tuned for OpenAI text-embedding-3 models.
+    similarity_floor: float = 0.25
+    similarity_full: float = 0.55
+    # A required criterion without keyword matches still passes with this semantic score.
+    required_semantic: float = 0.6
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="CVSCORE_",
@@ -165,6 +178,7 @@ class Settings(BaseSettings):
     langfuse: LangfuseConfig = Field(default_factory=LangfuseConfig)
     ranking: RankingConfig = Field(default_factory=RankingConfig)
     ocr: OCRConfig = Field(default_factory=OCRConfig)
+    screening: ScreeningConfig = Field(default_factory=ScreeningConfig)
 
     @property
     def max_concurrency(self) -> int:

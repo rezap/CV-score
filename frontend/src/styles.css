@@ -146,7 +146,7 @@ label {
   margin: 8px 0;
 }
 
-label > input:not([type="checkbox"]),
+label > input:not([type="checkbox"]):not([type="radio"]):not(.num),
 label > textarea {
   display: block;
   width: 100%;
@@ -436,4 +436,54 @@ table.files select {
   table.files colgroup {
     display: none;
   }
+}
+
+.modes {
+  margin: 10px 0;
+}
+
+.modes label {
+  margin: 6px 0;
+}
+
+.criterion {
+  border-top: 1px solid var(--line);
+  padding: 6px 0;
+}
+
+.criterion .terms {
+  width: 100%;
+  margin-top: 4px;
+}
+
+label.inline {
+  display: inline;
+  margin: 0;
+}
+
+.chip {
+  display: inline-block;
+  font-size: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 8px;
+  margin: 2px 4px 2px 0;
+}
+
+tr.dim td {
+  opacity: 0.6;
+}
+
+.screening-details {
+  margin-top: 16px;
+}
+
+.ranking .bar {
+  width: 110px;
+}
+
+.modes input.num {
+  display: inline-block;
+  width: 5em;
+  margin: 0 4px;
 }

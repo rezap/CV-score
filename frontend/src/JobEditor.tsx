@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { api, Dimension, JobProfile, Requirement } from "./api";
+import { api, Dimension, JobProfile, Requirement, ScreeningCriterion } from "./api";
 
 const DIMENSIONS: { key: Dimension; label: string }[] = [
   { key: "experience", label: "Experience" },
@@ -139,6 +139,12 @@ export function JobEditor({ job, onChange }: { job: JobProfile; onChange: (j: Jo
         </fieldset>
       )}
 
+      <ScreeningEditor
+        key={`screening-${job.id}`}
+        criteria={job.screening ?? []}
+        onChange={(screening) => set({ screening })}
+      />
+
       <fieldset>
         <legend>Score weights</legend>
         <div className="weights">
@@ -237,5 +243,97 @@ function SkillsInput({ skills, onChange }: { skills: string[]; onChange: (s: str
         }}
       />
     </label>
+  );
+}
+
+/** The fast screen's criteria: terms searched in the CVs, without a model reading them. */
+function ScreeningEditor({
+  criteria,
+  onChange,
+}: {
+  criteria: ScreeningCriterion[];
+  onChange: (c: ScreeningCriterion[]) => void;
+}) {
+  // Terms are edited as text so commas can be typed; parsed on every change.
+  const [raw, setRaw] = useState(criteria.map((c) => c.terms.join(", ")));
+  const update = (i: number, patch: Partial<ScreeningCriterion>) => {
+    const next = [...criteria];
+    next[i] = { ...criteria[i], ...patch };
+    onChange(next);
+  };
+  const nextId = () => {
+    const used = new Set(criteria.map((c) => c.id));
+    let n = criteria.length + 1;
+    while (used.has(`S${n}`)) n++;
+    return `S${n}`;
+  };
+  return (
+    <fieldset>
+      <legend>Screening criteria</legend>
+      <p className="muted small">
+        Searched in the CVs for a fast, cheap first ranking: any of the terms counts (whole
+        words, any case; one- and two-letter terms such as R match exactly). A required
+        criterion with no match screens the CV out. Empty list: the key skills are used.
+      </p>
+      {criteria.map((c, i) => (
+        <div className="criterion" key={c.id}>
+          <div className="row">
+            <span className="muted small mono">{c.id}</span>
+            <input
+              className="grow"
+              value={c.name}
+              placeholder="Competence"
+              onChange={(e) => update(i, { name: e.target.value })}
+            />
+            <label className="small inline">
+              <input
+                type="checkbox"
+                checked={c.required}
+                onChange={(e) => update(i, { required: e.target.checked })}
+              />{" "}
+              required
+            </label>
+            <input
+              type="number"
+              className="num"
+              min={0}
+              step={0.5}
+              value={c.weight}
+              title="Weight"
+              onChange={(e) => update(i, { weight: Number(e.target.value) })}
+            />
+            <button
+              className="link"
+              onClick={() => {
+                onChange(criteria.filter((_, j) => j !== i));
+                setRaw(raw.filter((_, j) => j !== i));
+              }}
+            >
+              remove
+            </button>
+          </div>
+          <input
+            className="terms"
+            value={raw[i] ?? ""}
+            placeholder="Terms, comma separated: Python, R, pandas, statistikk"
+            onChange={(e) => {
+              const copy = [...raw];
+              copy[i] = e.target.value;
+              setRaw(copy);
+              update(i, { terms: e.target.value.split(",").map((t) => t.trim()).filter(Boolean) });
+            }}
+          />
+        </div>
+      ))}
+      <button
+        className="link"
+        onClick={() => {
+          onChange([...criteria, { id: nextId(), name: "", terms: [], required: false, weight: 1 }]);
+          setRaw([...raw, ""]);
+        }}
+      >
+        + add
+      </button>
+    </fieldset>
   );
 }

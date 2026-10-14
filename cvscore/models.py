@@ -46,6 +46,22 @@ class Trait(BaseModel):
     weight: float = Field(default=1.0, ge=0)
 
 
+class ScreeningCriterion(BaseModel):
+    """A cheap, model-free check: does the CV mention any of these terms?"""
+
+    id: str
+    name: str = Field(description="What is looked for, e.g. 'Programming for data analysis'.")
+    terms: list[str] = Field(
+        default_factory=list,
+        description="Words that show it: synonyms, tools, abbreviations, other languages.",
+    )
+    required: bool = Field(
+        default=False,
+        description="A qualified CV must mention it; without any match the CV is screened out.",
+    )
+    weight: float = Field(default=1.0, ge=0)
+
+
 class Dimension(StrEnum):
     REQUIREMENTS = "requirements"
     EXPERIENCE = "experience"
@@ -75,6 +91,7 @@ class JobProfile(BaseModel):
     key_skills: list[str] = Field(default_factory=list)
     traits: list[Trait] = Field(default_factory=list)
     weights: dict[Dimension, float] = Field(default_factory=lambda: dict(DEFAULT_WEIGHTS))
+    screening: list[ScreeningCriterion] = Field(default_factory=list)
 
 
 # --- Candidate ---------------------------------------------------------------

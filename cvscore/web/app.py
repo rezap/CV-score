@@ -50,7 +50,15 @@ from cvscore.web.schemas import CandidateSummary, summarize
 STATIC_DIR = Path(__file__).parent / "static"
 MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 JOB_AD_SUFFIXES = {".pdf", ".docx", ".txt", ".md", ".doc", ".rtf", ".odt"}
-RUN_FILES = {"report.html", "ranking.csv", "results.json", "job.yaml"}
+RUN_FILES = {
+    "report.html",
+    "ranking.csv",
+    "results.json",
+    "job.yaml",
+    "screening.html",
+    "screening.csv",
+    "screening.json",
+}
 
 
 class FolderEntry(BaseModel):

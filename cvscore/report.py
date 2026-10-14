@@ -6,6 +6,7 @@ import csv
 import html
 import json
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from cvscore.models import (
     CandidateProfile,
@@ -15,6 +16,9 @@ from cvscore.models import (
     RequirementStatus,
     ScoreCard,
 )
+
+if TYPE_CHECKING:
+    from cvscore.screen import ScreenResult
 
 DIMENSIONS = [
     Dimension.REQUIREMENTS,
@@ -259,3 +263,87 @@ def write_report(
     write_csv(cards, out / "ranking.csv", names)
     write_json(job, cards, profiles, out / "results.json")
     write_html(job, cards, out / "report.html", names)
+
+
+# --- Screening -------------------------------------------------------------------------
+
+
+def write_screening(
+    out: Path, job: JobProfile, results: list[ScreenResult], names: dict[str, str] | None = None
+) -> None:
+    """screening.csv, screening.json and screening.html for a fast screen."""
+    out.mkdir(parents=True, exist_ok=True)
+
+    def label(cid: str) -> str:
+        return f"{names[cid]} ({cid})" if names and cid in names else cid
+
+    criteria = job.screening or (results[0].criteria if results else [])
+    crit_ids = [c.id for c in criteria]
+    crit_names = {c.id: c.name for c in criteria}
+    with (out / "screening.csv").open("w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(
+            ["rank", "candidate", "score", "screened_out", "years_hint",
+             *[f"{i} {crit_names[i]}" for i in crit_ids], "matched", "notes"]
+        )  # fmt: skip
+        for r in results:
+            by_id = {c.id: c for c in r.criteria}
+            w.writerow(
+                [
+                    r.rank,
+                    label(r.candidate_id),
+                    _pct(r.score),
+                    "yes" if r.screened_out else "",
+                    r.years_hint if r.years_hint is not None else "",
+                    *[_pct(by_id[i].score) if i in by_id else "" for i in crit_ids],
+                    "; ".join(t for c in r.criteria for t in c.matched),
+                    " | ".join(r.notes),
+                ]
+            )
+    (out / "screening.json").write_text(
+        json.dumps(
+            {
+                "job": {"id": job.id, "title": job.title},
+                "criteria": [c.model_dump(mode="json") for c in job.screening],
+                "candidates": [r.model_dump(mode="json") for r in results],
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    head = "".join(f"<th class=num title='{_e(crit_names[i])}'>{_e(i)}</th>" for i in crit_ids)
+    rows = []
+    for r in results:
+        by_id = {c.id: c for c in r.criteria}
+        cells = "".join(
+            f"<td class=num title='{_e(', '.join(by_id[i].matched))}'>{_pct(by_id[i].score)}</td>"
+            if i in by_id
+            else "<td></td>"
+            for i in crit_ids
+        )
+        out_flag = "<span class=flag>screened out</span>" if r.screened_out else ""
+        years = "" if r.years_hint is None else f"{r.years_hint:g}"
+        rows.append(
+            f"<tr><td class=num>{r.rank}</td><td class=id>{_e(label(r.candidate_id))}</td>"
+            f"<td class=num><b>{_pct(r.score)}</b></td>{cells}<td class=num>{years}</td>"
+            f"<td>{out_flag} {_e(' '.join(r.notes))}</td></tr>"
+        )
+    legend = "".join(
+        f"<li><b>{_e(c.id)}</b> {_e(c.name)}{' (required)' if c.required else ''}: "
+        f"<span class=muted>{_e(', '.join(c.terms))}</span></li>"
+        for c in job.screening
+    )
+    body = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Candidate screening</title><style>{_CSS}</style></head><body>
+<h1>{_e(job.title)}: screening</h1>
+<p class=note>A fast keyword (and semantic) search of the redacted documents, without a
+language model reading them. It gives an impression and picks whom to assess in depth; it
+is not a verdict. CVs that describe a skill in other words can be missed: check the
+screened-out candidates.</p>
+<h2>Criteria</h2><ul>{legend}</ul>
+<h2>Ranking</h2><div class=wrap><table><tr><th class=num>#</th><th>Candidate</th>
+<th class=num>Score</th>{head}<th class=num>Years</th><th>Notes</th></tr>{"".join(rows)}
+</table></div></body></html>"""
+    (out / "screening.html").write_text(body, encoding="utf-8")

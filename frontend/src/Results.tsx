@@ -1,5 +1,14 @@
 import { Fragment, useEffect, useState } from "react";
-import { api, Dimension, DimensionScore, Evidence, RunData, ScoreCard } from "./api";
+import {
+  api,
+  Dimension,
+  DimensionScore,
+  Evidence,
+  RunData,
+  ScoreCard,
+  ScreenResult,
+  ScreeningCriterion,
+} from "./api";
 
 const COLUMNS: { key: Dimension; label: string }[] = [
   { key: "experience", label: "Experience" },
@@ -48,14 +57,16 @@ export function RunView({ runId, showNames }: { runId: string; showNames: boolea
   if (!data) return <p className="muted">Loading...</p>;
   const { meta } = data;
   if (meta.status === "failed") return <p className="error">The run failed: {meta.error}</p>;
-  if (meta.status !== "done" || !data.results) {
+  if (meta.status !== "done") {
     const share = meta.total ? meta.done / meta.total : 0;
     return (
       <div>
         <p>
           {meta.status === "reading"
             ? "Reading documents..."
-            : `Assessing candidates: ${meta.done} of ${meta.total}`}
+            : meta.mode === "screen"
+              ? "Screening..."
+              : `Assessing candidates: ${meta.done} of ${meta.total}`}
         </p>
         <div className="progress">
           <div style={{ width: `${Math.max(3, share * 100)}%` }} />
@@ -63,7 +74,153 @@ export function RunView({ runId, showNames }: { runId: string; showNames: boolea
       </div>
     );
   }
-  return <Ranking data={data} showNames={showNames} />;
+  if (!data.results) {
+    return data.screening ? (
+      <Screening data={data} showNames={showNames} />
+    ) : (
+      <p className="muted">No results.</p>
+    );
+  }
+  return (
+    <>
+      <Ranking data={data} showNames={showNames} />
+      {data.screening && (
+        <details className="screening-details">
+          <summary>Screening of all candidates</summary>
+          <Screening data={data} showNames={showNames} />
+        </details>
+      )}
+    </>
+  );
+}
+
+/** The fast screen: score per criterion, matched terms and where they were found. */
+function Screening({ data, showNames }: { data: RunData; showNames: boolean }) {
+  const [open, setOpen] = useState<string | null>(null);
+  const screening = data.screening!;
+  const criteria: ScreeningCriterion[] = screening.criteria.length
+    ? screening.criteria
+    : (screening.candidates[0]?.criteria ?? []).map((c) => ({ ...c, terms: [] }));
+  const label = (r: ScreenResult) =>
+    showNames ? (data.identity[r.candidate_id] ?? r.candidate_id) : r.candidate_id;
+  const out = screening.candidates.filter((r) => r.screened_out).length;
+
+  return (
+    <div>
+      <div className="row between">
+        <span className="muted small">
+          {screening.candidates.length} screened{out ? `, ${out} screened out` : ""} · keyword
+          {screening.candidates.some((r) => r.criteria.some((c) => c.semantic_score !== null))
+            ? " and meaning"
+            : ""}{" "}
+          search, no model read the CVs
+        </span>
+        <span className="row">
+          {["screening.html", "screening.csv"].map((f) => (
+            <a key={f} href={api.fileUrl(data.meta.id, f)} target="_blank" rel="noreferrer">
+              {f}
+            </a>
+          ))}
+        </span>
+      </div>
+      <table className="ranking">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Candidate</th>
+            <th>Score</th>
+            {criteria.map((c) => (
+              <th key={c.id} title={c.terms.join(", ")}>
+                {c.name}
+                {c.required ? " *" : ""}
+              </th>
+            ))}
+            <th title="Span of dated entries outside education">Years</th>
+          </tr>
+        </thead>
+        <tbody>
+          {screening.candidates.map((r) => {
+            const isOpen = open === r.candidate_id;
+            const byId = Object.fromEntries(r.criteria.map((c) => [c.id, c]));
+            return (
+              <Fragment key={r.candidate_id}>
+                <tr
+                  className={`clickable ${isOpen ? "open" : ""} ${r.screened_out ? "dim" : ""}`}
+                  onClick={() => setOpen(isOpen ? null : r.candidate_id)}
+                >
+                  <td>{r.rank}</td>
+                  <td>
+                    {label(r)}{" "}
+                    {r.screened_out && <span className="flag knockout_failed">screened out</span>}
+                  </td>
+                  <td>
+                    <strong>{pct(r.score)}</strong>
+                  </td>
+                  {criteria.map((c) => {
+                    const m = byId[c.id];
+                    return (
+                      <td key={c.id} title={m?.matched.join(", ")}>
+                        {m ? (
+                          <span className="bar">
+                            <span style={{ width: `${Math.round(m.score * 100)}%` }} />
+                            <em>{m.matched.length ? m.matched.slice(0, 2).join(", ") : "–"}</em>
+                          </span>
+                        ) : (
+                          "–"
+                        )}
+                      </td>
+                    );
+                  })}
+                  <td>{r.years_hint ?? "–"}</td>
+                </tr>
+                {isOpen && (
+                  <tr className="detail-row">
+                    <td colSpan={criteria.length + 4}>
+                      <div className="detail">
+                        {r.notes.map((n) => (
+                          <p className="warning" key={n}>
+                            {n}
+                          </p>
+                        ))}
+                        {r.criteria.map((c) => (
+                          <div className="check" key={c.id}>
+                            <strong>{c.name}</strong>: {pct(c.score)}
+                            {c.semantic_score !== null && (
+                              <span className="muted small"> (meaning {pct(c.semantic_score)})</span>
+                            )}
+                            <div className="small">
+                              {c.matched.length ? (
+                                c.matched.map((t) => (
+                                  <span className="chip" key={t}>
+                                    {t}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="muted">no terms found</span>
+                              )}
+                            </div>
+                            <ul className="quotes">
+                              {c.snippets.map((sn, i) => (
+                                <li key={i}>{highlightRedactions(sn)}</li>
+                              ))}
+                            </ul>
+                          </div>
+                        ))}
+                      </div>
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+      <p className="muted small">
+        A first impression from keyword search, not a verdict: CVs that describe a skill in
+        other words can be missed. Check the screened-out candidates before discarding anyone.
+      </p>
+    </div>
+  );
 }
 
 function Ranking({ data, showNames }: { data: RunData; showNames: boolean }) {

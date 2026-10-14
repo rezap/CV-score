@@ -142,9 +142,32 @@ model.
 
 ```bash
 cvscore job draft job_ad.pdf -o job.yaml          # 1. draft a hiring profile from the ad
-# 2. review and edit job.yaml: must-haves, nice-to-haves, key skills, traits, weights
-cvscore run --job job.yaml --candidates candidates/ --out out/   # 3. assess and rank
+# 2. review and edit job.yaml: must-haves, nice-to-haves, key skills, traits, weights,
+#    screening criteria
+cvscore screen --job job.yaml --candidates candidates/ --out screen/   # 3a. fast first look
+cvscore run --job job.yaml --candidates candidates/ --out out/ --shortlist 15  # 3b. in depth
 ```
+
+There are two levels of assessment:
+
+- **Screening (fast, cheap):** `cvscore screen`, or "Quick screen" in the web app. The job
+  profile's screening criteria (drafted with the profile from the ad and general knowledge
+  of the field, e.g. "Programming for data analysis": Python, R, pandas, SQL, ...) are
+  searched in each candidate's redacted documents. Whole-word keyword matches give a score
+  per criterion (more distinct terms, higher score), and with an embeddings model
+  configured, a semantic match finds competences described in other words (it can give at
+  most 80%: keywords are needed for full credit). A criterion marked `required` with no
+  match screens the CV out (ranked last, still listed, with the reason). The output shows
+  which terms matched and where, and a rough years-of-experience span. No chat model reads
+  the CVs; only scanned CVs need OCR. Costs nothing or almost nothing; seconds per folder.
+- **In-depth assessment:** `cvscore run` (below), 2 model calls per candidate. With
+  `--shortlist N` ("Screen, then assess the best N" in the web app), everyone is screened
+  and only the best N not screened out are assessed in depth; the others are listed after
+  them with their screening score.
+
+Screening is a first impression, not a verdict: a keyword search favours CVs that use the
+expected words. Keep `required` for what practically every qualified CV mentions, and look
+at the screened-out list before discarding anyone.
 
 For each candidate, `run`:
 

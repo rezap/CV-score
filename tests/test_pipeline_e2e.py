@@ -43,6 +43,20 @@ def job_handler(_: Sequence[BaseMessage]) -> dict[str, Any]:
         "traits": [
             {"name": "Knowledge sharing", "definition": "Teaches others.", "evidence_examples": []}
         ],
+        "screening": [
+            {
+                "name": "Data programming",
+                "terms": ["Python", "SQL", "Scala"],
+                "required": True,
+                "importance": "high",
+            },
+            {
+                "name": "Streaming and big data",
+                "terms": ["Spark", "Kafka", "Flink", "streaming"],
+                "required": False,
+                "importance": "medium",
+            },
+        ],
     }
 
 
@@ -201,3 +215,50 @@ def test_run_without_candidates_fails(
     result = CliRunner().invoke(cli.app, ["run", "--job", "job.yaml", "--candidates", str(empty)])
     assert result.exit_code == 2
     shutil.rmtree(empty)
+
+
+def test_screen_is_fast_and_uses_no_chat_model(
+    fake: FakeLLM, setup: tuple[Path, Path], tmp_path: Path
+) -> None:
+    ad, root = setup
+    run("job", "draft", str(ad), "--out", "job.yaml")
+    calls = len(fake.calls)
+    output = run("screen", "--job", "job.yaml", "--candidates", str(root), "--out", "screen")
+    assert "Screened 3 candidates for 'Senior Data Engineer' (keywords)" in output
+    # Only OCR of the (blank) scanned CV; no chat model reads the CVs.
+    schemas = [schema for _, schema, _ in fake.calls[calls:]]
+    assert schemas == [PageTranscript]
+
+    data = json.loads((tmp_path / "screen" / "screening.json").read_text())
+    identity = json.loads((tmp_path / "screen" / "identity_map.json").read_text())
+    ranked = [(identity[c["candidate_id"]], c["screened_out"]) for c in data["candidates"]]
+    assert ranked[0] == ("Jane Example", False)
+    assert ranked[-1] == ("Sam Roe", False)  # no readable text: unscored, listed last
+    jane = data["candidates"][0]
+    assert "Python" in jane["criteria"][0]["matched"]
+    report = (tmp_path / "screen" / "screening.html").read_text()
+    assert "Data programming (required)" in report and "Jane Example" not in report
+
+
+def test_run_with_shortlist_assesses_only_the_best(
+    fake: FakeLLM, setup: tuple[Path, Path], tmp_path: Path
+) -> None:
+    ad, root = setup
+    run("job", "draft", str(ad), "--out", "job.yaml")
+    out = tmp_path / "out"
+    output = run(
+        "run", "--job", "job.yaml", "--candidates", str(root), "--out", str(out),
+        "--shortlist", "1",
+    )  # fmt: skip
+    assert "Assessing the best 1 of 3 candidates" in output
+    schemas = [schema for _, schema, _ in fake.calls]
+    assert schemas.count(CandidateProfileDraft) == 1 and schemas.count(ScoringDraft) == 1
+
+    identity = json.loads((out / "identity_map.json").read_text())
+    results = json.loads((out / "results.json").read_text())
+    cards = [c["score_card"] for c in results["candidates"]]
+    assert [identity[c["candidate_id"]] for c in cards][0] == "Jane Example"
+    assert [c["rank"] for c in cards] == [1, 2, 3]
+    rest = cards[1:]
+    assert all(c["total"] is None and c["notes"][0].startswith("Screening only") for c in rest)
+    assert (out / "screening.json").is_file()

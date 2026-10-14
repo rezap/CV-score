@@ -176,6 +176,7 @@ def ingest_cmd(
             form_table=form_table,
             form_table_path=forms,
             ocr=_ocr_hook(config, out / ".cache", ocr),
+            cache_dir=out / ".cache",
         )
     except (ExtractionError, ValueError) as e:
         typer.secho(str(e), fg="red", err=True)
@@ -338,6 +339,7 @@ def run_cmd(
             form_table=form_table,
             form_table_path=forms,
             ocr=ocr_hook(llm, settings.ocr) if ocr else None,
+            cache_dir=out / ".cache" if cache else None,
         )
     except (ExtractionError, ValueError) as e:
         typer.secho(str(e), fg="red", err=True)
@@ -439,7 +441,12 @@ def screen_cmd(
     settings = _load(config)
     try:
         profile = load_job_profile(job)
-        ingested = ingest(candidates, manifest=manifest, ocr=_ocr_hook(config, out / ".cache", ocr))
+        ingested = ingest(
+            candidates,
+            manifest=manifest,
+            ocr=_ocr_hook(config, out / ".cache", ocr),
+            cache_dir=out / ".cache",
+        )
     except (ExtractionError, ValueError) as e:
         typer.secho(str(e), fg="red", err=True)
         raise typer.Exit(2) from e

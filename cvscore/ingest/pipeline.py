@@ -6,9 +6,11 @@ from collections.abc import Iterable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from cvscore.ingest.cache import cached_extractor
 from cvscore.ingest.discovery import (
     OCR,
     CandidateSource,
+    Extractor,
     discover_folder,
     discover_manifest,
     relative_display,
@@ -54,15 +56,17 @@ class IngestResult:
     sources: list[CandidateSource] = field(default_factory=list)
 
 
-def _extract(path: Path, doc_type: DocType, display_path: str) -> SourceDocument:
+def extract_document(path: Path, doc_type: DocType, display_path: str) -> SourceDocument:
     return extract_file(path, doc_type=doc_type, display_path=display_path)
 
 
-def _read_manifest_files(source: CandidateSource, base: Path, ocr: OCR | None) -> None:
+def _read_manifest_files(
+    source: CandidateSource, base: Path, extract: Extractor, ocr: OCR | None
+) -> None:
     for f in source.files:
         f.display_path = relative_display(f.path, base)
         try:
-            f.document = extract_file(f.path, doc_type=f.doc_type, display_path=f.display_path)
+            f.document = extract(f.path, f.doc_type, f.display_path)
         except ExtractionError as e:
             f.error = str(e)
         if f.document is not None and ocr is not None:
@@ -78,14 +82,19 @@ def ingest(
     overrides: dict[str, DocType] | None = None,
     exclude: Iterable[str] = (),
     ocr: OCR | None = None,
+    cache_dir: Path | None = None,
 ) -> IngestResult:
-    """Read and group every candidate's documents (see ``discovery`` for the layouts)."""
+    """Read and group every candidate's documents (see ``discovery`` for the layouts).
+
+    With ``cache_dir``, extracted documents are cached there and reused (see ``cache``).
+    """
+    extract = cached_extractor(extract_document, cache_dir)
     if manifest:
         sources = discover_manifest(manifest)
         for source in sources:
-            _read_manifest_files(source, manifest.parent, ocr)
+            _read_manifest_files(source, manifest.parent, extract, ocr)
     else:
-        sources = discover_folder(root, _extract, overrides=overrides, exclude=exclude, ocr=ocr)
+        sources = discover_folder(root, extract, overrides=overrides, exclude=exclude, ocr=ocr)
     result = IngestResult(candidates=[], sources=sources)
     for source in sources:
         cid = source.candidate_id

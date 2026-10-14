@@ -156,6 +156,7 @@ class RunManager:
                 overrides=request.overrides,
                 exclude=request.exclude,
                 ocr=ocr_hook(llm, settings.ocr),
+                cache_dir=cache_dir,
             )
             summaries: list[CandidateSummary] = [summarize(s) for s in ingested.sources]
             (out / "candidates.json").write_text(

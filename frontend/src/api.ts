@@ -234,4 +234,7 @@ export const api = {
       `/api/runs/${encodeURIComponent(id)}/redacted/${encodeURIComponent(candidate)}`,
     ),
   fileUrl: (id: string, name: string) => `/api/runs/${encodeURIComponent(id)}/files/${name}`,
+  originalUrl: (id: string, candidate: string, file: string) =>
+    `/api/runs/${encodeURIComponent(id)}/original/${encodeURIComponent(candidate)}` +
+    `?file=${encodeURIComponent(file)}`,
 };

@@ -224,3 +224,32 @@ def test_full_run_with_shortlist(client: TestClient, root: Path) -> None:
     assert cards[0]["total"] is not None
     assert all(c["total"] is None for c in cards[1:])
     assert len(data["screening"]["candidates"]) == 3
+
+
+def test_original_documents(client: TestClient, root: Path, tmp_path: Path) -> None:
+    profile = client.post("/api/job", data={"text": JOB_AD}).json()["profile"]
+    run_id = client.post(
+        "/api/runs", json={"folder": str(root), "job": profile, "mode": "screen"}
+    ).json()["id"]
+    data = wait_for(client, run_id)
+    jane = next(c for c in data["candidates"] if c["label"] == "Jane Example")
+    [cv] = jane["files"]
+    url = f"/api/runs/{run_id}/original/{jane['id']}"
+
+    response = client.get(url, params={"file": cv["path"]})
+    assert response.status_code == 200
+    assert response.content == (root / cv["path"]).read_bytes()
+    assert response.headers["content-type"] == "application/pdf"
+    assert response.headers["content-disposition"].startswith("inline")
+
+    # Only files listed for that candidate in this run, never anything else on disk.
+    (tmp_path / "secret.txt").write_text("not a CV")
+    sam = next(c for c in data["candidates"] if c["label"] == "Sam Roe")
+    for params, cid in [
+        ({"file": sam["files"][0]["path"]}, jane["id"]),  # another candidate's file
+        ({"file": "../../secret.txt"}, jane["id"]),
+        ({"file": str(tmp_path / "secret.txt")}, jane["id"]),
+        ({"file": cv["path"]}, "c-unknown"),
+    ]:
+        assert client.get(f"/api/runs/{run_id}/original/{cid}", params=params).status_code == 404
+    assert client.get("/api/runs/nope/original/x", params={"file": "a"}).status_code == 404

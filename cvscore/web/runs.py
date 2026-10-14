@@ -118,6 +118,25 @@ class RunManager:
             "screening": load("screening.json", None),
         }
 
+    def original(self, run_id: str, candidate_id: str, file: str) -> Path:
+        """A candidate's original document, as listed for this run; KeyError otherwise.
+
+        Only files recorded in the run's candidates.json, inside the assessed folder,
+        can be served: a request cannot reach any other file on disk."""
+        out = self.path(run_id)
+        listing = out / "candidates.json"
+        candidates = json.loads(listing.read_text("utf-8")) if listing.is_file() else []
+        listed = {
+            f["path"] for c in candidates if c.get("id") == candidate_id for f in c.get("files", [])
+        }
+        if file not in listed:
+            raise KeyError(file)
+        folder = Path(self.meta(run_id).folder).resolve()
+        path = (folder / file).resolve()
+        if folder not in path.parents or not path.is_file():
+            raise KeyError(file)
+        return path
+
     def redacted(self, run_id: str) -> dict[str, dict[str, str]]:
         p = self.path(run_id) / "redacted.json"
         data: dict[str, dict[str, str]] = json.loads(p.read_text("utf-8")) if p.is_file() else {}

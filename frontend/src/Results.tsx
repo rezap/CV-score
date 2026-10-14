@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useState } from "react";
 import {
   api,
+  DocType,
   Dimension,
   DimensionScore,
   Evidence,
@@ -150,7 +151,7 @@ function Screening({ data, showNames }: { data: RunData; showNames: boolean }) {
                 >
                   <td>{r.rank}</td>
                   <td>
-                    {label(r)}{" "}
+                    {label(r)} <CvLink data={data} candidate={r.candidate_id} />{" "}
                     {r.screened_out && <span className="flag knockout_failed">screened out</span>}
                   </td>
                   <td>
@@ -177,6 +178,7 @@ function Screening({ data, showNames }: { data: RunData; showNames: boolean }) {
                   <tr className="detail-row">
                     <td colSpan={criteria.length + 4}>
                       <div className="detail">
+                        <Documents data={data} candidate={r.candidate_id} showNames={showNames} />
                         {r.notes.map((n) => (
                           <p className="warning" key={n}>
                             {n}
@@ -267,7 +269,9 @@ function Ranking({ data, showNames }: { data: RunData; showNames: boolean }) {
                   onClick={() => setOpen(isOpen ? null : card.candidate_id)}
                 >
                   <td>{card.rank ?? "–"}</td>
-                  <td>{label(card)}</td>
+                  <td>
+                    {label(card)} <CvLink data={data} candidate={card.candidate_id} />
+                  </td>
                   <td>
                     <strong>{pct(card.total)}</strong>
                   </td>
@@ -287,6 +291,7 @@ function Ranking({ data, showNames }: { data: RunData; showNames: boolean }) {
                 {isOpen && (
                   <tr className="detail-row">
                     <td colSpan={columns.length + 4}>
+                      <Documents data={data} candidate={card.candidate_id} showNames={showNames} />
                       <Detail runId={data.meta.id} card={card} />
                     </td>
                   </tr>
@@ -413,5 +418,70 @@ function highlightRedactions(text: string) {
     ) : (
       part
     ),
+  );
+}
+
+const DOC_LABEL: Record<DocType, string> = {
+  cv: "CV",
+  cover_letter: "Cover letter",
+  application_form: "Application form",
+  other: "Document",
+};
+
+function filesOf(data: RunData, candidate: string) {
+  return data.candidates.find((c) => c.id === candidate)?.files ?? [];
+}
+
+/** Opens the candidate's original CV in a new tab, without expanding the row. */
+function CvLink({ data, candidate }: { data: RunData; candidate: string }) {
+  const files = filesOf(data, candidate);
+  const cv = files.find((f) => f.doc_type === "cv") ?? files[0];
+  if (!cv) return null;
+  return (
+    <a
+      className="cv-link small"
+      href={api.originalUrl(data.meta.id, candidate, cv.path)}
+      target="_blank"
+      rel="noreferrer"
+      title="Open the original document"
+      onClick={(e) => e.stopPropagation()}
+    >
+      {cv.doc_type === "cv" ? "CV" : "file"} ↗
+    </a>
+  );
+}
+
+/** Links to all of a candidate's original documents. File names often contain the
+ * candidate's name, so they are shown only with "Show names". */
+function Documents({
+  data,
+  candidate,
+  showNames,
+}: {
+  data: RunData;
+  candidate: string;
+  showNames: boolean;
+}) {
+  const files = filesOf(data, candidate);
+  if (!files.length) return null;
+  return (
+    <p className="small documents">
+      Original documents:{" "}
+      {files.map((f, i) => {
+        const ext = f.path.split(".").pop()?.toUpperCase() ?? "";
+        return (
+          <span key={f.path}>
+            {i > 0 && " · "}
+            <a
+              href={api.originalUrl(data.meta.id, candidate, f.path)}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {DOC_LABEL[f.doc_type]} ({showNames ? f.path.split("/").pop() : ext})
+            </a>
+          </span>
+        );
+      })}
+    </p>
   );
 }

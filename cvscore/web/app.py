@@ -13,6 +13,7 @@ folders on disk, below the browse root you start it with.
     GET  /api/runs/{id}                status, progress, and results when done
     GET  /api/runs/{id}/redacted/{cid} the redacted text the models saw for one candidate
     GET  /api/runs/{id}/files/{name}   report.html, ranking.csv, results.json, job.yaml
+    GET  /api/runs/{id}/original/{cid}?file=  a candidate's original document
 """
 
 from __future__ import annotations
@@ -294,6 +295,12 @@ def create_app(
         if not path.is_file():
             raise HTTPException(404, "Not written yet.")
         return FileResponse(path, filename=f"{run_id}-{name}" if name != "report.html" else None)
+
+    @app.get("/api/runs/{run_id}/original/{candidate_id}")
+    def original(run_id: str, candidate_id: str, file: str) -> FileResponse:
+        """A candidate's original document (CV, letter, form), opened in the browser."""
+        path: Path = _run_or_404(lambda: runs.original(run_id, candidate_id, file))
+        return FileResponse(path, filename=path.name, content_disposition_type="inline")
 
     if static_dir is not None and (static_dir / "index.html").is_file():
         app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")

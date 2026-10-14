@@ -487,3 +487,12 @@ tr.dim td {
   width: 5em;
   margin: 0 4px;
 }
+
+.cv-link {
+  margin-left: 4px;
+  white-space: nowrap;
+}
+
+.documents {
+  margin: 4px 8px 8px;
+}

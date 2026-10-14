@@ -69,7 +69,8 @@ cvscore serve                                           # http://127.0.0.1:8000
    saved `job.yaml` can be uploaded instead.
 3. **Ranking:** shows progress, then the ranking with a score per dimension and flags. Click
    a candidate for the requirement checks, reasons and quotes, and for the redacted text
-   the model saw. Download `report.html`, `ranking.csv` and `results.json`.
+   the model saw. "CV ↗" next to each candidate (in the quick screen too) opens the
+   original document; the expanded row links all of their documents. Download `report.html`, `ranking.csv` and `results.json`.
 
 Names are hidden (pseudonymous IDs) until you tick "Show names". Runs are kept in
 `cvscore-runs/` (personal data: keep it private), and model results are cached there, so

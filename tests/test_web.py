@@ -108,6 +108,8 @@ def test_scan_groups_candidates(client: TestClient, root: Path) -> None:
     assert by_label["Alex Sample"]["location"]["region"] == "eu"
     assert by_label["Alex Sample"]["location"]["country"] == "NL"
     assert by_label["Sam Roe"]["location"]["region"] is None
+    # ... relative to the home country in the config (Norway by default).
+    assert client.get("/api/status").json()["home_name"] == "Norway"
 
     overridden = client.post(
         "/api/scan",
@@ -263,3 +265,13 @@ def test_original_documents(client: TestClient, root: Path, tmp_path: Path) -> N
     ]:
         assert client.get(f"/api/runs/{run_id}/original/{cid}", params=params).status_code == 404
     assert client.get("/api/runs/nope/original/x", params={"file": "a"}).status_code == 404
+
+
+def test_home_country_from_the_config(client: TestClient, root: Path, tmp_path: Path) -> None:
+    (tmp_path / "cvscore.yaml").write_text(
+        "langfuse:\n  enabled: false\nlocation:\n  home_country: Netherlands\n"
+    )
+    assert client.get("/api/status").json()["home_country"] == "NL"
+    result = client.post("/api/scan", json={"folder": str(root)}).json()
+    alex = next(c for c in result["candidates"] if c["label"] == "Alex Sample")
+    assert alex["location"]["region"] == "home"  # a Rotterdam address

@@ -1,6 +1,18 @@
 // Small shared pieces: collapsible steps, region chips and state kept in the browser.
-import { ReactNode, useEffect, useState } from "react";
-import { CandidateSummary, Location, REGIONS, RegionKey, regionOf } from "./api";
+import { createContext, ReactNode, useContext, useEffect, useState } from "react";
+import {
+  CandidateSummary,
+  DEFAULT_HOME,
+  Home,
+  Location,
+  REGION_KEYS,
+  RegionKey,
+  regionList,
+  regionOf,
+} from "./api";
+
+/** The home country from the config, for labelling the location filters. */
+export const HomeContext = createContext<Home>(DEFAULT_HOME);
 
 /** State saved in this browser (localStorage), so a reload keeps the work. Storage can be
  * missing or blocked (private windows): then it is ordinary state. */
@@ -59,7 +71,7 @@ export function Chevron({ open }: { open: boolean }) {
 }
 
 export function countRegions(candidates: (CandidateSummary | undefined)[]) {
-  const counts: Record<RegionKey, number> = { norway: 0, eu: 0, europe: 0, world: 0, unknown: 0 };
+  const counts: Record<RegionKey, number> = { home: 0, eu: 0, europe: 0, world: 0, unknown: 0 };
   for (const c of candidates) counts[regionOf(c)]++;
   return counts;
 }
@@ -72,13 +84,14 @@ export function RegionFilter(props: {
   label?: string;
 }) {
   const { selected, counts, onChange } = props;
-  const all = REGIONS.map((r) => r.key);
+  const regions = regionList(useContext(HomeContext));
+  const all = REGION_KEYS;
   return (
     <div
       className={`region-filter ${selected.length === all.length ? "all" : ""}`}
       role="group" aria-label={props.label ?? "Location"}>
       {props.label && <span className="filter-label">{props.label}</span>}
-      {REGIONS.map((r) => {
+      {regions.map((r) => {
         const on = selected.includes(r.key);
         return (
           <button
@@ -119,19 +132,24 @@ export function RegionFilter(props: {
   );
 }
 
-export const ALL_REGIONS: RegionKey[] = REGIONS.map((r) => r.key);
+export const ALL_REGIONS: RegionKey[] = REGION_KEYS;
+
+/** Saved filters from an older version may name regions that no longer exist. */
+export function knownRegions(saved: RegionKey[]): RegionKey[] {
+  const known = saved.filter((r) => REGION_KEYS.includes(r));
+  return known.length ? known : ALL_REGIONS;
+}
 
 /** A small badge with where the candidate lives; the tooltip says how it was found. */
 export function RegionBadge({ location }: { location?: Location }) {
-  const key: RegionKey = location?.region ?? "unknown";
-  const region = REGIONS.find((r) => r.key === key)!;
+  const key: RegionKey = regionOf({ location } as CandidateSummary);
   const how = location?.region
     ? `${location.country_name}${location.place && location.place !== location.country_name ? ` (${location.place})` : ""}` +
       ` · from ${location.source}${location.confident ? "" : " · a guess, check the CV"}`
     : "No address, town or phone country code found";
   return (
     <span className={`region-badge region-${key} ${location?.confident ? "" : "unsure"}`} title={how}>
-      {location?.country && key !== "norway" ? location.country : region.short}
+      {location?.country ?? "?"}
       {location?.region && !location.confident ? "?" : ""}
       {location?.relocation && (
         <span className="reloc" title="Mentions relocating">

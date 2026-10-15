@@ -1,4 +1,5 @@
-"""Where a candidate lives, for relocation logistics: Norway, EU, rest of Europe or the world.
+"""Where a candidate lives, for relocation logistics: the home country (where the job is,
+``location.home_country`` in the config), the EU, the rest of Europe or the world.
 
 Read from the documents without a model: the address or location in the CV's top area
 and contact lines, the sender lines of a cover letter, "I live in ..." sentences, and the
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterable
+from functools import lru_cache
 from typing import Literal
 
 from pydantic import BaseModel
@@ -23,21 +25,13 @@ from cvscore.ingest.text_utils import is_section_keyword, normalize_text
 from cvscore.models import BlockKind, DocType, SourceDocument
 from cvscore.pii import find_phones, has_contact_details
 
-Region = Literal["norway", "eu", "europe", "world"]
-
-REGION_LABELS: dict[str, str] = {
-    "norway": "Norway",
-    "eu": "EU",
-    "europe": "Europe (non-EU)",
-    "world": "Rest of the world",
-    "unknown": "Unknown",
-}
+# "home" is the configured home country; the others exclude it.
+Region = Literal["home", "eu", "europe", "world"]
+DEFAULT_HOME = "NO"
 
 # code: (English name, region, other names: native, Norwegian, abbreviations)
 # fmt: off
 _COUNTRIES: dict[str, tuple[str, Region, tuple[str, ...]]] = {
-    # Norway
-    "NO": ("Norway", "norway", ("Norge", "Noreg", "Norwegen", "Norvège")),
     # EU
     "SE": ("Sweden", "eu", ("Sverige", "Schweden")),
     "DK": ("Denmark", "eu", ("Danmark", "Dänemark")),
@@ -67,6 +61,7 @@ _COUNTRIES: dict[str, tuple[str, Region, tuple[str, ...]]] = {
     "MT": ("Malta", "eu", ()),
     "CY": ("Cyprus", "eu", ("Kypros", "Zypern")),
     # Europe outside the EU
+    "NO": ("Norway", "europe", ("Norge", "Noreg", "Norwegen", "Norvège")),
     "GB": (
         "United Kingdom",
         "europe",
@@ -304,11 +299,8 @@ _LIVE_IN = re.compile(
     r"\s+(?:in|i)\s+(?P<rest>[^.;\n]{2,60})",
     re.I,
 )
-_RELOCATE = re.compile(
-    r"\b(?:relocat\w*|move to Norway|moving to Norway|flytte til (?:Norge|Oslo|Bergen|"
-    r"Trondheim|Stavanger)|umzug|willing to move)\b",
-    re.I,
-)
+# Relocating in general; moving to the home country is added per country (_relocate_re).
+_RELOCATE = r"relocat\w*|willing to move|umzug|umziehen|flytte til|flytta till"
 _NO_POSTCODE = re.compile(r"\b(?:N|NO)-\d{4}\b")
 # A Norwegian mobile number written without +47: 8 digits starting with 4 or 9.
 _NO_MOBILE = re.compile(r"(?<![\d+])[49]\d(?:\s?\d){6}(?!\d)")
@@ -335,11 +327,33 @@ class Location(BaseModel):
     place: str | None = None  # the town or country as written in the documents
     source: str | None = None  # "address", "phone", "letter" or "CV text"
     confident: bool = False
-    relocation: bool = False  # mentions relocating / moving to Norway
+    relocation: bool = False  # mentions relocating / moving to the home country
 
-    @property
-    def label(self) -> str:
-        return REGION_LABELS[self.region or "unknown"]
+
+def country_code(value: str) -> str | None:
+    """The ISO code for a country code or name ("NO", "no", "Norway", "Deutschland")."""
+    text = value.strip()
+    if text.upper() in _COUNTRIES:
+        return text.upper()
+    for code, (name, _, aliases) in _COUNTRIES.items():
+        if text.casefold() in {n.casefold() for n in (name, *aliases)}:
+            return code
+    return None
+
+
+def country_name(code: str) -> str:
+    return _COUNTRIES[code][0] if code in _COUNTRIES else code
+
+
+def in_eu(code: str) -> bool:
+    return code in _COUNTRIES and _COUNTRIES[code][1] == "eu"
+
+
+@lru_cache(maxsize=8)
+def _relocate_re(home: str) -> re.Pattern[str]:
+    name, _, aliases = _COUNTRIES[home]
+    places = _alternation([name, *aliases, *_CITIES.get(home, ())])
+    return re.compile(rf"\b(?:{_RELOCATE}|(?:move|moving) to (?:{places}))\b", re.I)
 
 
 def _alternation(words: Iterable[str]) -> str:
@@ -389,9 +403,13 @@ def _top_area(doc: SourceDocument, limit: int) -> list[str]:
     return lines
 
 
-def locate(documents: Iterable[SourceDocument], names: Iterable[str] = ()) -> Location:
-    """Best guess at where the candidate lives (see the module docstring)."""
+def locate(
+    documents: Iterable[SourceDocument], names: Iterable[str] = (), home: str = DEFAULT_HOME
+) -> Location:
+    """Best guess at where the candidate lives (see the module docstring); ``home`` is the
+    ISO code of the country the job is in."""
     docs = list(documents)
+    relocate_re = _relocate_re(home)
     # The candidate's own names are not places, even "Israel" or "Paris".
     exclude = {p.lower() for n in names for p in re.split(r"[\s_\-.,]+", n) if p}
     scores: dict[str, float] = {}
@@ -445,7 +463,7 @@ def locate(documents: Iterable[SourceDocument], names: Iterable[str] = ()) -> Lo
                 for m in _LIVE_IN.finditer(b.text):
                     for code, place in _places(m.group("rest"), exclude)[:1]:
                         add(code, 4, place, "letter" if letter else "CV text")
-            if _RELOCATE.search(b.text):
+            if relocate_re.search(b.text):
                 relocation = True
 
     confident = bool(scores) and max(scores.values()) >= 3
@@ -464,7 +482,7 @@ def locate(documents: Iterable[SourceDocument], names: Iterable[str] = ()) -> Lo
     name, region, _ = _COUNTRIES[code]
     place, source = first[code]
     return Location(
-        region=region,
+        region="home" if code == home else region,
         country=code,
         country_name=name,
         place=place,

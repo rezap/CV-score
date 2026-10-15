@@ -23,8 +23,8 @@
   --radius: 14px;
   --radius-sm: 8px;
   /* Location colours */
-  --r-norway: #c0362c;
-  --r-norway-soft: #fdeceb;
+  --r-home: #c0362c;
+  --r-home-soft: #fdeceb;
   --r-eu: #1d4ed8;
   --r-eu-soft: #e8efff;
   --r-europe: #0f766e;
@@ -75,8 +75,8 @@
     --mark-text: #0f1115;
     --shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.45);
-    --r-norway: #ff8a80;
-    --r-norway-soft: #3a1f1f;
+    --r-home: #ff8a80;
+    --r-home-soft: #3a1f1f;
     --r-eu: #8fb1ff;
     --r-eu-soft: #1c2742;
     --r-europe: #5fd0c3;
@@ -622,9 +622,9 @@ a:hover {
   border-color: var(--line-strong);
 }
 
-.region-norway {
-  --rc: var(--r-norway);
-  --rc-soft: var(--r-norway-soft);
+.region-home {
+  --rc: var(--r-home);
+  --rc-soft: var(--r-home-soft);
 }
 
 .region-eu {

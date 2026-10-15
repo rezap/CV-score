@@ -165,6 +165,29 @@ class ScreeningConfig(BaseModel):
     required_semantic: float = 0.6
 
 
+class LocationConfig(BaseModel):
+    """Where the job is: candidates living there are "home", the rest EU, Europe or world."""
+
+    # ISO code or English/native name: "NO", "Norway", "DE", "Deutschland", "GB", ...
+    home_country: str = "NO"
+
+    @field_validator("home_country", mode="before")
+    @classmethod
+    def _norway_problem(cls, value: Any) -> Any:
+        # YAML 1.1 reads an unquoted NO as false.
+        return "NO" if value is False else value
+
+    @field_validator("home_country")
+    @classmethod
+    def _known_country(cls, value: str) -> str:
+        from cvscore.location import country_code  # avoids a circular import
+
+        code = country_code(value)
+        if code is None:
+            raise ValueError(f"Unknown country: {value!r}. Use an ISO code such as NO or DE.")
+        return code
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="CVSCORE_",
@@ -179,6 +202,7 @@ class Settings(BaseSettings):
     ranking: RankingConfig = Field(default_factory=RankingConfig)
     ocr: OCRConfig = Field(default_factory=OCRConfig)
     screening: ScreeningConfig = Field(default_factory=ScreeningConfig)
+    location: LocationConfig = Field(default_factory=LocationConfig)
 
     @property
     def max_concurrency(self) -> int:

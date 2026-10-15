@@ -63,8 +63,8 @@ cvscore serve                                           # http://127.0.0.1:8000
 1. **Applications:** browse to the folder with the applications and pick it. Each candidate
    is one line (open it to see how the files were grouped and what each document was taken
    for, with the reason); correct a type or leave a file out, then "Apply changes". "Only
-   the N to check" lists the candidates with warnings. **Location** chips (Norway, EU,
-   Europe outside the EU, rest of the world, unknown) choose whom to include in the run:
+   the N to check" lists the candidates with warnings. **Location** chips (the home country,
+   EU, Europe outside the EU, rest of the world, unknown) choose whom to include in the run:
    from all, a click picks one location, further clicks add or remove others.
 2. **Job:** upload the job ad (PDF, Word or text) or paste it. The model drafts a hiring
    profile: must-haves, nice-to-haves, key skills, traits, screening criteria and score
@@ -84,7 +84,8 @@ cvscore serve                                           # http://127.0.0.1:8000
 Each step folds to a one-line summary (steps 1 and 2 fold when a run starts), and the
 folder, job, run options and last run come back after a reload.
 
-**Location** is read from the documents without a model: the address or town in the CV's
+The home country is `location.home_country` in `cvscore.yaml` (default `NO`; an ISO code
+or a name such as `Germany`). **Location** is read from the documents without a model: the address or town in the CV's
 top area and contact lines, the sender lines of a cover letter, "I live in ..." sentences,
 and the phone number's country code. A phone code alone, or towns only found among the
 CV's roles, give a guess (shown with "?" and an outline: check the CV). ✈ marks candidates

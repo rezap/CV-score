@@ -44,6 +44,7 @@ from cvscore.ingest.ocr import ocr_hook
 from cvscore.ingest.pipeline import extract_document
 from cvscore.job import draft_job_profile
 from cvscore.llm.structured import LLMProvider, settings_provider
+from cvscore.location import DEFAULT_HOME, country_name, in_eu
 from cvscore.models import DocType, JobProfile
 from cvscore.observability import Tracer
 from cvscore.service import timestamp
@@ -149,7 +150,14 @@ def create_app(
         try:
             s = load_settings(config)
         except (FileNotFoundError, ValidationError, ValueError) as e:
-            return {"ready": False, "problems": [str(e)], "browse_root": str(browse_root)}
+            return {
+                "ready": False,
+                "problems": [str(e)],
+                "browse_root": str(browse_root),
+                "home_country": DEFAULT_HOME,
+                "home_name": country_name(DEFAULT_HOME),
+                "home_in_eu": in_eu(DEFAULT_HOME),
+            }
         problems: list[str] = []
         if s.provider is Provider.OPENAI:
             models = {
@@ -176,6 +184,9 @@ def create_app(
             "models": models,
             "langfuse": s.langfuse.enabled,
             "browse_root": str(browse_root),
+            "home_country": s.location.home_country,
+            "home_name": country_name(s.location.home_country),
+            "home_in_eu": in_eu(s.location.home_country),
         }
 
     @app.get("/api/fs")
@@ -216,7 +227,11 @@ def create_app(
             exclude=request.exclude,
             ocr=scan_ocr(),
         )
-        return ScanResult(folder=str(folder), candidates=[summarize(s) for s in sources])
+        try:
+            home = load_settings(config).location.home_country
+        except (FileNotFoundError, ValidationError, ValueError):
+            home = DEFAULT_HOME
+        return ScanResult(folder=str(folder), candidates=[summarize(s, home) for s in sources])
 
     @app.post("/api/job")
     def job(

@@ -3,18 +3,20 @@ import {
   api,
   CandidateSummary,
   DocType,
+  DEFAULT_HOME,
+  Home,
   JobProfile,
-  REGIONS,
   RegionKey,
   RunMeta,
   Status,
+  regionList,
   regionOf,
 } from "./api";
 import { Candidates } from "./Candidates";
 import { FolderPicker } from "./FolderPicker";
 import { JobEditor, JobInput } from "./JobEditor";
 import { RunView } from "./Results";
-import { ALL_REGIONS, Step, usePersistent } from "./ui";
+import { ALL_REGIONS, HomeContext, Step, knownRegions, usePersistent } from "./ui";
 
 type Mode = "screen" | "shortlist" | "all";
 
@@ -26,7 +28,8 @@ export function App() {
   const [folder, setFolder] = usePersistent<string | null>("folder", null);
   const [overrides, setOverrides] = usePersistent<Record<string, DocType>>("overrides", {});
   const [exclude, setExclude] = usePersistent<string[]>("exclude", []);
-  const [regions, setRegions] = usePersistent<RegionKey[]>("regions", ALL_REGIONS);
+  const [savedRegions, setRegions] = usePersistent<RegionKey[]>("regions", ALL_REGIONS);
+  const regions = knownRegions(savedRegions);
   const [job, setJobState] = usePersistent<JobProfile | null>("job", null);
   const [mode, setMode] = usePersistent<Mode>("mode", "screen");
   const [shortlist, setShortlist] = usePersistent<number>("shortlist", 10);
@@ -112,14 +115,19 @@ export function App() {
       (e: Error) => setRunError(e.message),
     );
 
+  const home: Home = status
+    ? { code: status.home_country, name: status.home_name, inEU: status.home_in_eu }
+    : DEFAULT_HOME;
   const regionNote =
     regions.length < ALL_REGIONS.length
-      ? ` in ${REGIONS.filter((r) => regions.includes(r.key))
+      ? ` in ${regionList(home)
+          .filter((r) => regions.includes(r.key))
           .map((r) => r.label)
           .join(", ")}`
       : "";
 
   return (
+    <HomeContext.Provider value={home}>
     <div className="app">
       <header className="topbar">
         <div className="brand">
@@ -369,5 +377,6 @@ export function App() {
         </Step>
       </main>
     </div>
+    </HomeContext.Provider>
   );
 }

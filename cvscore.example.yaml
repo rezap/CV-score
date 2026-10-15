@@ -72,6 +72,12 @@ screening:
   similarity_full: 0.55    # ... and as a full (semantic) match
   required_semantic: 0.6   # a required criterion without keywords passes above this
 
+location:
+  # The country the job is in. Candidates living there are "home" in the web app's location
+  # filter; the others are EU, Europe outside the EU, or rest of the world. An ISO code or
+  # a name: NO, Norway, DE, Deutschland, GB, ...
+  home_country: "NO"   # quoted: YAML reads a bare NO as false (accepted anyway)
+
 ranking:
   knockout: flag          # flag | exclude: what happens when a must-have is clearly not met
   low_confidence: 0.5     # flag scores whose confidence is below this

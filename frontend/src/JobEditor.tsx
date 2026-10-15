@@ -86,27 +86,19 @@ export function JobEditor({ job, onChange }: { job: JobProfile; onChange: (j: Jo
         <textarea rows={2} value={job.summary} onChange={(e) => set({ summary: e.target.value })} />
       </label>
 
-      <RequirementList
-        title="Must-haves"
-        hint="A clear fail flags the candidate and ranks them last."
-        prefix="M"
-        items={job.must_have}
-        onChange={(must_have) => set({ must_have })}
-      />
-      <RequirementList
-        title="Nice-to-haves"
-        hint="Weight = importance within this list."
-        prefix="N"
-        items={job.nice_to_have}
-        withWeight
-        onChange={(nice_to_have) => set({ nice_to_have })}
+      <RequirementBoard
+        must={job.must_have}
+        nice={job.nice_to_have}
+        onChange={(must_have, nice_to_have) => set({ must_have, nice_to_have })}
       />
 
-      <SkillsInput key={job.id} skills={job.key_skills} onChange={(key_skills) => set({ key_skills })} />
+      <SkillsInput skills={job.key_skills} onChange={(key_skills) => set({ key_skills })} />
 
       {job.traits.length > 0 && (
-        <fieldset>
-          <legend>Personal characteristics</legend>
+        <details className="fold">
+          <summary>
+            Personal characteristics <span className="count">{job.traits.length}</span>
+          </summary>
           <p className="muted small">
             Assessed from evidence in the documents. They only change the ranking if the Traits
             weight below is above 0.
@@ -136,7 +128,7 @@ export function JobEditor({ job, onChange }: { job: JobProfile; onChange: (j: Jo
               </button>
             </div>
           ))}
-        </fieldset>
+        </details>
       )}
 
       <ScreeningEditor
@@ -145,8 +137,8 @@ export function JobEditor({ job, onChange }: { job: JobProfile; onChange: (j: Jo
         onChange={(screening) => set({ screening })}
       />
 
-      <fieldset>
-        <legend>Score weights</legend>
+      <details className="fold">
+        <summary>Score weights</summary>
         <div className="weights">
           {DIMENSIONS.map((d) => (
             <label key={d.key}>
@@ -167,82 +159,226 @@ export function JobEditor({ job, onChange }: { job: JobProfile; onChange: (j: Jo
         <p className="muted small">
           Shares of the total score (sum {weightSum.toFixed(2)}; they are normalised).
         </p>
-      </fieldset>
+      </details>
     </div>
   );
 }
 
-function RequirementList(props: {
-  title: string;
-  hint: string;
-  prefix: string;
-  items: Requirement[];
-  withWeight?: boolean;
-  onChange: (items: Requirement[]) => void;
+type ListKey = "must" | "nice";
+
+const LISTS: { key: ListKey; title: string; hint: string; prefix: string }[] = [
+  {
+    key: "must",
+    title: "Must-haves",
+    hint: "A clear fail flags the candidate and ranks them last.",
+    prefix: "M",
+  },
+  {
+    key: "nice",
+    title: "Nice-to-haves",
+    hint: "Weight = importance within this list.",
+    prefix: "N",
+  },
+];
+
+/** Must-haves and nice-to-haves side by side: drag a requirement to move or reorder it
+ * (or use the arrow button), edit it in place. */
+function RequirementBoard(props: {
+  must: Requirement[];
+  nice: Requirement[];
+  onChange: (must: Requirement[], nice: Requirement[]) => void;
 }) {
-  const { items, onChange } = props;
-  const update = (i: number, patch: Partial<Requirement>) => {
-    const next = [...items];
-    next[i] = { ...items[i], ...patch };
-    onChange(next);
+  const [drag, setDrag] = useState<{ list: ListKey; index: number } | null>(null);
+  const [over, setOver] = useState<{ list: ListKey; index: number } | null>(null);
+  // Rows can be dragged only by their grip, so text in them can still be selected.
+  const [armed, setArmed] = useState<string | null>(null);
+  const lists: Record<ListKey, Requirement[]> = { must: props.must, nice: props.nice };
+
+  const emit = (next: Record<ListKey, Requirement[]>) => props.onChange(next.must, next.nice);
+  const freshId = (list: ListKey, taken: Requirement[]) => {
+    const prefix = LISTS.find((l) => l.key === list)!.prefix;
+    const used = new Set([...props.must, ...props.nice, ...taken].map((r) => r.id));
+    let n = 1;
+    while (used.has(`${prefix}${n}`)) n++;
+    return `${prefix}${n}`;
   };
-  const nextId = () => {
-    const used = new Set(items.map((r) => r.id));
-    let n = items.length + 1;
-    while (used.has(`${props.prefix}${n}`)) n++;
-    return `${props.prefix}${n}`;
+  const move = (from: ListKey, index: number, to: ListKey, at: number) => {
+    const next = { must: [...props.must], nice: [...props.nice] };
+    const [item] = next[from].splice(index, 1);
+    if (!item) return;
+    // Within a list, removing the item shifts the drop position.
+    const position = from === to && at > index ? at - 1 : at;
+    const moved = from === to ? item : { ...item, id: freshId(to, next[to]) };
+    next[to].splice(Math.min(position, next[to].length), 0, moved);
+    emit(next);
   };
+  const update = (list: ListKey, i: number, patch: Partial<Requirement>) => {
+    const next = { must: [...props.must], nice: [...props.nice] };
+    next[list][i] = { ...next[list][i], ...patch };
+    emit(next);
+  };
+  const remove = (list: ListKey, i: number) =>
+    emit({ ...lists, [list]: lists[list].filter((_, j) => j !== i) });
+  const add = (list: ListKey) =>
+    emit({
+      ...lists,
+      [list]: [...lists[list], { id: freshId(list, []), description: "", weight: 1 }],
+    });
+  const drop = (list: ListKey, index: number) => {
+    if (drag) move(drag.list, drag.index, list, index);
+    setDrag(null);
+    setOver(null);
+  };
+
   return (
-    <fieldset>
-      <legend>{props.title}</legend>
-      <p className="muted small">{props.hint}</p>
-      {items.map((r, i) => (
-        <div className="row" key={r.id}>
-          <span className="muted small mono">{r.id}</span>
-          <input
-            className="grow"
-            value={r.description}
-            onChange={(e) => update(i, { description: e.target.value })}
-          />
-          {props.withWeight && (
-            <input
-              type="number"
-              className="num"
-              min={0}
-              step={0.5}
-              value={r.weight}
-              title="Weight"
-              onChange={(e) => update(i, { weight: Number(e.target.value) })}
-            />
-          )}
-          <button className="link" onClick={() => onChange(items.filter((_, j) => j !== i))}>
-            remove
-          </button>
-        </div>
-      ))}
-      <button
-        className="link"
-        onClick={() => onChange([...items, { id: nextId(), description: "", weight: 1 }])}
-      >
-        + add
-      </button>
-    </fieldset>
+    <div className="req-board">
+      {LISTS.map((l) => {
+        const items = lists[l.key];
+        const other: ListKey = l.key === "must" ? "nice" : "must";
+        return (
+          <fieldset
+            key={l.key}
+            className={`req-list ${drag && over?.list === l.key ? "drop-target" : ""}`}
+            onDragOver={(e) => {
+              if (!drag) return;
+              e.preventDefault();
+              if (over?.list !== l.key || over.index !== items.length)
+                setOver({ list: l.key, index: items.length });
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              drop(l.key, over?.list === l.key ? over.index : items.length);
+            }}
+          >
+            <legend>
+              {l.title} <span className="count">{items.length}</span>
+            </legend>
+            <p className="muted small">{l.hint}</p>
+            {items.map((r, i) => (
+              <div
+                key={r.id}
+                className={`req ${drag?.list === l.key && drag.index === i ? "dragging" : ""} ${
+                  over?.list === l.key && over.index === i && drag ? "insert-before" : ""
+                }`}
+                draggable={armed === r.id}
+                onDragStart={(e) => {
+                  e.dataTransfer.effectAllowed = "move";
+                  e.dataTransfer.setData("text/plain", r.description);
+                  setDrag({ list: l.key, index: i });
+                }}
+                onDragEnd={() => {
+                  setDrag(null);
+                  setOver(null);
+                  setArmed(null);
+                }}
+                onDragOver={(e) => {
+                  if (!drag) return;
+                  e.preventDefault();
+                  e.stopPropagation();
+                  const box = e.currentTarget.getBoundingClientRect();
+                  const index = e.clientY > box.top + box.height / 2 ? i + 1 : i;
+                  if (over?.list !== l.key || over.index !== index) setOver({ list: l.key, index });
+                }}
+              >
+                <span
+                  className="grip"
+                  title="Drag to move"
+                  aria-hidden="true"
+                  onMouseDown={() => setArmed(r.id)}
+                  onMouseUp={() => setArmed(null)}
+                >
+                  ⋮⋮
+                </span>
+                <span className="muted small mono req-id">{r.id}</span>
+                <textarea
+                  className="grow req-text"
+                  rows={1}
+                  value={r.description}
+                  placeholder="Requirement"
+                  onChange={(e) => update(l.key, i, { description: e.target.value })}
+                />
+                {l.key === "nice" && (
+                  <input
+                    type="number"
+                    className="num"
+                    min={0}
+                    step={0.5}
+                    value={r.weight}
+                    title="Weight"
+                    onChange={(e) => update(l.key, i, { weight: Number(e.target.value) })}
+                  />
+                )}
+                <button
+                  className="icon-btn"
+                  title={`Move to ${other === "must" ? "must-haves" : "nice-to-haves"}`}
+                  aria-label={`Move to ${other === "must" ? "must-haves" : "nice-to-haves"}`}
+                  onClick={() => move(l.key, i, other, lists[other].length)}
+                >
+                  {other === "must" ? "←" : "→"}
+                </button>
+                <button
+                  className="icon-btn"
+                  title="Remove"
+                  aria-label="Remove"
+                  onClick={() => remove(l.key, i)}
+                >
+                  ×
+                </button>
+              </div>
+            ))}
+            {drag && over?.list === l.key && over.index === items.length && (
+              <div className="insert-end" />
+            )}
+            {items.length === 0 && <p className="muted small empty-drop">Drop requirements here</p>}
+            <button className="link" onClick={() => add(l.key)}>
+              + add
+            </button>
+          </fieldset>
+        );
+      })}
+    </div>
   );
 }
 
+/** Key skills as chips: type and press Enter (or a comma) to add one, × to remove. */
 function SkillsInput({ skills, onChange }: { skills: string[]; onChange: (s: string[]) => void }) {
-  const [raw, setRaw] = useState(skills.join(", "));
+  const [draft, setDraft] = useState("");
+  const commit = (raw: string) => {
+    const added = raw.split(",").map((s) => s.trim()).filter((s) => s && !skills.includes(s));
+    if (added.length) onChange([...skills, ...added]);
+    setDraft("");
+  };
   return (
-    <label>
-      Key skills <span className="muted small">(comma separated)</span>
-      <input
-        value={raw}
-        onChange={(e) => {
-          setRaw(e.target.value);
-          onChange(e.target.value.split(",").map((s) => s.trim()).filter(Boolean));
-        }}
-      />
-    </label>
+    <div className="field">
+      <span className="field-label">Key skills</span>
+      <div className="chip-input">
+        {skills.map((s) => (
+          <span className="chip editable" key={s}>
+            {s}
+            <button
+              aria-label={`Remove ${s}`}
+              onClick={() => onChange(skills.filter((x) => x !== s))}
+            >
+              ×
+            </button>
+          </span>
+        ))}
+        <input
+          value={draft}
+          placeholder={skills.length ? "Add a skill" : "Python, SQL, ..."}
+          onChange={(e) => (e.target.value.includes(",") ? commit(e.target.value) : setDraft(e.target.value))}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              e.preventDefault();
+              commit(draft);
+            } else if (e.key === "Backspace" && !draft && skills.length) {
+              onChange(skills.slice(0, -1));
+            }
+          }}
+          onBlur={() => draft.trim() && commit(draft)}
+        />
+      </div>
+    </div>
   );
 }
 
@@ -268,8 +404,10 @@ function ScreeningEditor({
     return `S${n}`;
   };
   return (
-    <fieldset>
-      <legend>Screening criteria</legend>
+    <details className="fold" open>
+      <summary>
+        Screening criteria <span className="count">{criteria.length}</span>
+      </summary>
       <p className="muted small">
         Searched in the CVs for a fast, cheap first ranking: any of the terms counts (whole
         words, any case; one- and two-letter terms such as R match exactly). A required
@@ -334,6 +472,6 @@ function ScreeningEditor({
       >
         + add
       </button>
-    </fieldset>
+    </details>
   );
 }

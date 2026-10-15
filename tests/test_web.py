@@ -48,6 +48,7 @@ def root(tmp_path: Path) -> Path:
 @pytest.fixture
 def client(root: Path, tmp_path: Path, fake: FakeLLM) -> TestClient:
     def provider(settings: Settings, cache_dir: Path | None) -> LLMProvider:
+        fake.cache_dirs.append(cache_dir)
         return fake.provider()
 
     app = create_app(
@@ -102,6 +103,11 @@ def test_scan_groups_candidates(client: TestClient, root: Path) -> None:
     assert jane_cv["doc_type"] == "cv" and "file name" in jane_cv["reason"]
     [sam_cv] = by_label["Sam Roe"]["files"]
     assert sam_cv["quality"] < 0.5 and sam_cv["warnings"]
+    # Where each lives, for the location filter: Alex's CV has a Rotterdam address; the
+    # blank scan says nothing.
+    assert by_label["Alex Sample"]["location"]["region"] == "eu"
+    assert by_label["Alex Sample"]["location"]["country"] == "NL"
+    assert by_label["Sam Roe"]["location"]["region"] is None
 
     overridden = client.post(
         "/api/scan",
@@ -125,6 +131,8 @@ def test_job_from_ad_upload_text_and_yaml(client: TestClient, fake: FakeLLM) -> 
 
     pasted = client.post("/api/job", data={"text": JOB_AD})
     assert pasted.json()["profile"]["id"] == "senior-data-engineer"
+    # Drafts use the model-call cache, so the same ad is drafted once.
+    assert fake.cache_dirs[-1] is not None and fake.cache_dirs[-1].name == ".cache"
 
     profile["title"] = "Edited title"
     loaded = client.post(
@@ -211,6 +219,8 @@ def test_quick_screen_run(client: TestClient, root: Path, fake: FakeLLM) -> None
     # No chat model read the CVs (only OCR of the blank scan).
     assert {schema for _, schema, _ in fake.calls[calls:]} <= {PageTranscript}
     assert client.get(f"/api/runs/{started['id']}/files/screening.html").status_code == 200
+    # The run keeps the profile as edited, to start another run from it.
+    assert data["job"] == profile
 
 
 def test_full_run_with_shortlist(client: TestClient, root: Path) -> None:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Sequence
+from pathlib import Path
 from typing import Any, TypeVar
 
 from langchain_core.messages import BaseMessage
@@ -26,6 +27,7 @@ class FakeLLM:
         self.handlers = handlers
         self.calls: list[tuple[ModelRole, type[BaseModel], list[BaseMessage]]] = []
         self.role: ModelRole = ModelRole.SCORER
+        self.cache_dirs: list[Path | None] = []  # cache folder of each provider made
 
     def generate(
         self, schema: type[T], messages: Sequence[BaseMessage], config: RunnableConfig | None

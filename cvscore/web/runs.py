@@ -21,7 +21,7 @@ from pydantic import BaseModel, Field
 from cvscore.config import Settings
 from cvscore.ingest import ingest
 from cvscore.ingest.ocr import ocr_hook
-from cvscore.job import save_job_profile
+from cvscore.job import load_job_profile, save_job_profile
 from cvscore.llm.structured import LLMProvider
 from cvscore.models import DocType, JobProfile
 from cvscore.report import write_screening
@@ -116,7 +116,13 @@ class RunManager:
             "identity": load("identity_map.json", {}),
             "candidates": load("candidates.json", []),
             "screening": load("screening.json", None),
+            "job": self.job(run_id),
         }
+
+    def job(self, run_id: str) -> dict[str, Any] | None:
+        """The job profile the run used, as edited, to start another run from it."""
+        path = self.path(run_id) / "job.yaml"
+        return load_job_profile(path).model_dump(mode="json") if path.is_file() else None
 
     def original(self, run_id: str, candidate_id: str, file: str) -> Path:
         """A candidate's original document, as listed for this run; KeyError otherwise.

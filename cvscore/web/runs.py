@@ -183,7 +183,9 @@ class RunManager:
                 ocr=ocr_hook(llm, settings.ocr),
                 cache_dir=cache_dir,
             )
-            summaries: list[CandidateSummary] = [summarize(s) for s in ingested.sources]
+            summaries: list[CandidateSummary] = [
+                summarize(s, settings.location.home_country) for s in ingested.sources
+            ]
             (out / "candidates.json").write_text(
                 json.dumps([s.model_dump(mode="json") for s in summaries], indent=2),
                 encoding="utf-8",

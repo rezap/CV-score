@@ -16,6 +16,9 @@ export interface Status {
   models?: Record<string, string | null>;
   langfuse?: boolean;
   browse_root: string;
+  home_country: string; // ISO code, e.g. "NO"
+  home_name: string; // e.g. "Norway"
+  home_in_eu: boolean;
 }
 
 export interface FolderListing {
@@ -36,16 +39,30 @@ export interface FileSummary {
   error: string | null;
 }
 
-export type Region = "norway" | "eu" | "europe" | "world";
+// "home" is the home country set in the config (location.home_country).
+export type Region = "home" | "eu" | "europe" | "world";
 export type RegionKey = Region | "unknown";
 
-export const REGIONS: { key: RegionKey; label: string; short: string }[] = [
-  { key: "norway", label: "Norway", short: "NO" },
-  { key: "eu", label: "EU", short: "EU" },
-  { key: "europe", label: "Europe (non-EU)", short: "Europe" },
-  { key: "world", label: "Rest of the world", short: "World" },
-  { key: "unknown", label: "Unknown", short: "?" },
-];
+export const REGION_KEYS: RegionKey[] = ["home", "eu", "europe", "world", "unknown"];
+
+export interface Home {
+  code: string; // ISO code, e.g. "NO"
+  name: string; // e.g. "Norway"
+  inEU: boolean;
+}
+
+export const DEFAULT_HOME: Home = { code: "NO", name: "Norway", inEU: false };
+
+/** The location filters, labelled for the home country ("Norway", "Germany", ...). */
+export function regionList(home: Home): { key: RegionKey; label: string }[] {
+  return [
+    { key: "home", label: home.name },
+    { key: "eu", label: home.inEU ? "Rest of the EU" : "EU" },
+    { key: "europe", label: "Europe (non-EU)" },
+    { key: "world", label: "Rest of the world" },
+    { key: "unknown", label: "Unknown" },
+  ];
+}
 
 /** Where the documents say the candidate lives (cvscore/location.py). */
 export interface Location {
@@ -68,8 +85,11 @@ export interface CandidateSummary {
   location?: Location; // missing in runs made before locations were detected
 }
 
-export const regionOf = (c: CandidateSummary | undefined): RegionKey =>
-  c?.location?.region ?? "unknown";
+export const regionOf = (c: CandidateSummary | undefined): RegionKey => {
+  const region = c?.location?.region as string | null | undefined;
+  // Runs made before the home country was configurable called it "norway".
+  return region === "norway" ? "home" : ((region as RegionKey | null | undefined) ?? "unknown");
+};
 
 export interface Requirement {
   id: string;

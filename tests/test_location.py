@@ -3,7 +3,9 @@
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
+from cvscore.config import LocationConfig, load_settings
 from cvscore.ingest.plaintext import extract_text_file
 from cvscore.location import locate
 from cvscore.models import DocType, SourceDocument
@@ -28,12 +30,12 @@ MSc Statistics, University of Example, 2018
 @pytest.mark.parametrize(
     ("header", "region", "country"),
     [
-        ("Kari Nordmann\nStorgata 1, 0155 Oslo\nkari@example.com", "norway", "NO"),
+        ("Kari Nordmann\nStorgata 1, 0155 Oslo\nkari@example.com", "home", "NO"),
         ("Jan Kowalski\nWarsaw, Poland\njan@example.com", "eu", "PL"),
         ("Tom Example\nManchester, UK | tom@example.com", "europe", "GB"),
         ("Priya Example\nBengaluru, India\npriya@example.com", "world", "IN"),
-        ("Ola Example\nAddress: Kongens gate 2, Trondheim", "norway", "NO"),
-        ("Lena Example\nN-5003\nlena@example.com", "norway", "NO"),
+        ("Ola Example\nAddress: Kongens gate 2, Trondheim", "home", "NO"),
+        ("Lena Example\nN-5003\nlena@example.com", "home", "NO"),
     ],
 )
 def test_location_from_the_cv_header(
@@ -107,3 +109,36 @@ def test_a_name_is_not_a_place(tmp_path: Path) -> None:
 def test_dates_are_not_phone_numbers(tmp_path: Path) -> None:
     cv = doc(tmp_path, "Sam Example\n01.2019 - 05.2021\n" + EXPERIENCE)
     assert locate([cv]).region is None
+
+
+def test_home_country_is_configurable(tmp_path: Path) -> None:
+    berlin = doc(tmp_path, "Max Example\nBerlin, Germany\nmax@example.com\n" + EXPERIENCE)
+    oslo = doc(tmp_path, "Kari Example\nOslo, Norway\nkari@example.com\n" + EXPERIENCE)
+    assert locate([berlin], home="DE").region == "home"
+    # Away from home, Norway is Europe outside the EU.
+    assert (locate([oslo], home="DE").region, locate([oslo]).region) == ("europe", "home")
+
+    letter = doc(
+        tmp_path,
+        "Dear hiring manager,\n\nI would love to move to Munich for this role.\n",
+        DocType.COVER_LETTER,
+    )
+    assert locate([letter], home="DE").relocation
+
+
+@pytest.mark.parametrize(
+    ("value", "code"), [("NO", "NO"), ("de", "DE"), ("Norway", "NO"), ("Deutschland", "DE")]
+)
+def test_home_country_by_code_or_name(value: str, code: str) -> None:
+    assert LocationConfig(home_country=value).home_country == code
+
+
+def test_unknown_home_country_is_an_error() -> None:
+    with pytest.raises(ValidationError, match="Unknown country"):
+        LocationConfig(home_country="Atlantis")
+
+
+def test_unquoted_no_in_yaml_means_norway(tmp_path: Path) -> None:
+    config = tmp_path / "cvscore.yaml"
+    config.write_text("location:\n  home_country: NO\n")  # YAML reads NO as false
+    assert load_settings(config).location.home_country == "NO"

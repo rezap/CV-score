@@ -5,6 +5,7 @@ from __future__ import annotations
 from pydantic import BaseModel
 
 from cvscore.ingest.discovery import CandidateSource
+from cvscore.location import Location, locate
 from cvscore.models import DocType
 
 
@@ -25,6 +26,7 @@ class CandidateSummary(BaseModel):
     grouped_by: list[str]
     warnings: list[str]
     files: list[FileSummary]
+    location: Location = Location()  # where the documents say the person lives
 
 
 def summarize(source: CandidateSource) -> CandidateSummary:
@@ -46,4 +48,5 @@ def summarize(source: CandidateSource) -> CandidateSummary:
             )
             for f in source.files
         ],
+        location=locate([f.document for f in source.files if f.document], source.names),
     )

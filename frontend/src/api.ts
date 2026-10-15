@@ -36,6 +36,28 @@ export interface FileSummary {
   error: string | null;
 }
 
+export type Region = "norway" | "eu" | "europe" | "world";
+export type RegionKey = Region | "unknown";
+
+export const REGIONS: { key: RegionKey; label: string; short: string }[] = [
+  { key: "norway", label: "Norway", short: "NO" },
+  { key: "eu", label: "EU", short: "EU" },
+  { key: "europe", label: "Europe (non-EU)", short: "Europe" },
+  { key: "world", label: "Rest of the world", short: "World" },
+  { key: "unknown", label: "Unknown", short: "?" },
+];
+
+/** Where the documents say the candidate lives (cvscore/location.py). */
+export interface Location {
+  region: Region | null;
+  country: string | null;
+  country_name: string | null;
+  place: string | null;
+  source: string | null;
+  confident: boolean;
+  relocation: boolean;
+}
+
 export interface CandidateSummary {
   id: string;
   label: string;
@@ -43,7 +65,11 @@ export interface CandidateSummary {
   grouped_by: string[];
   warnings: string[];
   files: FileSummary[];
+  location?: Location; // missing in runs made before locations were detected
 }
+
+export const regionOf = (c: CandidateSummary | undefined): RegionKey =>
+  c?.location?.region ?? "unknown";
 
 export interface Requirement {
   id: string;
@@ -174,6 +200,7 @@ export interface RunData {
   identity: Record<string, string>;
   candidates: CandidateSummary[];
   screening: { criteria: ScreeningCriterion[]; candidates: ScreenResult[] } | null;
+  job: JobProfile | null; // the profile the run used, as edited
 }
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {

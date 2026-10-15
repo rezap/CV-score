@@ -253,7 +253,8 @@ def create_app(
         tracer = Tracer.from_config(s.langfuse)
         run_config = tracer.run_config(run_id=f"job-draft-{timestamp()}", trace_name="job-draft")
         try:
-            profile = draft_job_profile(ad_text, provider(s, None), run_config)
+            # Cached with the runs' model calls: the same ad gives the same draft at once.
+            profile = draft_job_profile(ad_text, provider(s, runs_dir / ".cache"), run_config)
         except Exception as e:  # noqa: BLE001 - model or network errors go back to the user
             raise HTTPException(502, f"The model call failed: {type(e).__name__}: {e}") from e
         finally:

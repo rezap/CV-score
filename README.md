@@ -7,10 +7,11 @@ Built on LangChain / LangGraph, with models from an Azure AI Foundry project (En
 auth) or the OpenAI API (API key), and Langfuse for tracing. See [`docs/PLAN.md`](docs/PLAN.md) for the design
 and roadmap.
 
-> Status: early development. The full pipeline runs end to end (job profile, ingestion,
-> redaction, extraction, scoring, ranking, report), from the command line or a local web
-> app. The agentic refinements (evidence agent, pairwise judge, shortlist critic) are next;
-> see the plan.
+> Status: early development. The full pipeline runs end to end (ingestion with OCR, job
+> profile, fast screening, redaction, extraction, scoring, ranking, report), from the
+> command line or a local web app. Not built yet: recording review decisions, evaluation
+> and bias probes, and the agentic refinements (evidence agent, pairwise judge, shortlist
+> critic). See [the plan's status section](docs/PLAN.md#11-status-what-is-built-and-what-is-not).
 
 ## Setup
 
@@ -243,19 +244,27 @@ It is skipped in normal test runs and costs a few cents per run.
 
 ## Configuration
 
-`cvscore.yaml` maps each model role to a deployment (Azure) or model (OpenAI):
+`cvscore.example.yaml` lists every setting with comments. `cvscore.yaml` maps each model
+role to a deployment (Azure) or model (OpenAI):
 
 | Role | Used for |
 |---|---|
-| `extractor` | High-volume structured extraction from documents |
+| `extractor` | High-volume structured extraction from documents; OCR by default |
 | `scorer` | Rubric scoring (default for roles you don't set) |
-| `agent` | Tool-calling agents |
-| `judge` | Pairwise comparison and shortlist review |
+| `agent` | Drafting the job profile; tool-calling agents later |
+| `judge` | Reserved for the planned pairwise comparison and shortlist review (unused today) |
 
-`ranking` settings: `knockout` (`flag` or `exclude`), `low_confidence` (threshold for the
-low-confidence flag) and `max_dropped_quotes`.
+Reasoning models (o-series, gpt-5 and later) get no temperature unless you set one;
+`reasoning_effort` can be set per role.
 
-`max_concurrency` (under `azure` or `openai`) caps how many candidates are assessed at once.
+| Section | Settings |
+|---|---|
+| `azure` / `openai` | endpoint (Azure) or `api_key_env` / `base_url` (OpenAI), `models`, `embeddings` (used by screening's semantic match), `max_concurrency` (candidates assessed at once), `max_retries`, `timeout_s` |
+| `langfuse` | `enabled`, `host`, `environment`, `release`, `sample_rate`, `mask_pii` (keys from `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY`) |
+| `ocr` | `enabled`, `role` (whose vision model reads the pages), `dpi`, `max_pages` |
+| `screening` | `semantic`, `similarity_floor`, `similarity_full`, `required_semantic` |
+| `location` | `home_country`: ISO code or name, default `NO` |
+| `ranking` | `knockout` (`flag` or `exclude`), `low_confidence` (threshold for the low-confidence flag), `max_dropped_quotes` |
 
 Any value can be overridden by environment variables with the `CVSCORE_` prefix and `__`
 for nesting, e.g. `CVSCORE_AZURE__ENDPOINT`. Use `CVSCORE_CONFIG` to point at another file.

@@ -7,6 +7,8 @@ languages. For every candidate:
 - **Keywords:** whole-word, case-insensitive matches of each criterion's terms in the
   redacted documents (one- and two-letter terms such as "R" or "Go" match case-sensitively).
   More distinct terms found means a higher score: 1 term 0.6, 2 terms 0.84, 3 terms 0.94.
+  When the criterion's evidence level is "applied" or "proven" (the default), a term
+  found only in a skills list or summary, not in described work, counts half.
 - **Semantic** (optional, when an embeddings model is configured): the similarity of the
   criterion to the closest passage of the CV, for competences described in other words.
   It can raise a criterion's score to at most 0.8; keywords are needed for full credit.
@@ -23,19 +25,20 @@ from __future__ import annotations
 
 import math
 import re
-import unicodedata
 from collections.abc import Callable, Sequence
 from datetime import date
 
 from pydantic import BaseModel, Field
 
 from cvscore.config import ScreeningConfig
+from cvscore.contexts import fold, placed_blocks, term_pattern
 from cvscore.extract import parse_date, years_of_experience
 from cvscore.ingest.pipeline import IngestResult
 from cvscore.job import screening_from_skills
 from cvscore.models import (
     BlockKind,
     CandidateDocuments,
+    EvidenceLevel,
     ExperienceEntry,
     JobProfile,
     ScreeningCriterion,
@@ -71,6 +74,10 @@ class CriterionResult(BaseModel):
     keyword_score: float
     semantic_score: float | None = None
     matched: list[str] = Field(default_factory=list, description="Terms found in the CV.")
+    listed_only: list[str] = Field(
+        default_factory=list,
+        description="Matched terms found only in a skills list or summary, not in work.",
+    )
     snippets: list[str] = Field(default_factory=list, description="Where they were found.")
 
 
@@ -87,26 +94,6 @@ class ScreenResult(BaseModel):
 
 
 # --- Keywords ----------------------------------------------------------------------------
-
-
-def _fold(text: str) -> str:
-    """Lower case without accents: "Statistikk"/"statistikk", "Résumé"/"resume"."""
-    text = unicodedata.normalize("NFKD", text)
-    return "".join(ch for ch in text if not unicodedata.combining(ch))
-
-
-def term_pattern(term: str) -> re.Pattern[str] | None:
-    """Whole-word pattern for a term. Spaces and hyphens inside it match either ("time
-    series" = "time-series"). One- and two-letter terms ("R", "C", "Go", "ML") match only
-    in the given case, and "R" not in "R&D"."""
-    term = term.strip()
-    if not term:
-        return None
-    parts = [re.escape(_fold(p)) for p in re.split(r"[\s\-]+", term)]
-    body = r"[\s\-]*".join(parts)
-    if len(term) <= 2:
-        return re.compile(rf"(?<![\w+#.\[]){re.escape(_fold(term))}(?![\w+#&])")
-    return re.compile(rf"(?<![\w+#]){body}(?![\w+#])", re.I)
 
 
 def _snippet(text: str, start: int, end: int, width: int = 60) -> str:
@@ -136,8 +123,23 @@ def keyword_matches(
     return matched, snippets
 
 
-def keyword_score(found: int) -> float:
+def keyword_score(found: float) -> float:
+    """1 term 0.6, 2 terms 0.84, 3 terms 0.94; a term that counts half adds less."""
     return round(1 - 0.4**found, 2) if found else 0.0
+
+
+LISTED_ONLY_CREDIT = 0.5  # under "applied"/"proven": a term found only in a skills list
+
+
+def listed_only_terms(matched: list[str], blocks: Sequence[tuple[str, str]]) -> list[str]:
+    """The matched terms that occur only in listing sections (skills, summary, ...);
+    ``blocks`` are (folded text, context) pairs."""
+    out = []
+    for term in matched:
+        pattern = term_pattern(term)
+        if pattern and not any(ctx == "work" and pattern.search(t) for t, ctx in blocks):
+            out.append(term)
+    return out
 
 
 # --- Semantic ----------------------------------------------------------------------------
@@ -217,7 +219,7 @@ def screen_candidate(
     criteria = job.screening or screening_from_skills(job.key_skills)
     blocks = [b for doc in candidate.documents for b in redact_blocks(doc.blocks, names)]
     original = "\n".join(b.text for b in blocks)
-    text = _fold(original)
+    text = fold(original)
     result = ScreenResult(candidate_id=candidate.candidate_id, score=None)
     content = [b for b in blocks if b.kind is not BlockKind.HEADING]
     if not REDACTED_RE.sub("", " ".join(b.text for b in content)).strip():
@@ -229,9 +231,20 @@ def screen_candidate(
             semantic = list(semantic_scores(criteria, passages(blocks), embed, config))
         except Exception as e:  # noqa: BLE001 - keywords still work without embeddings
             result.notes.append(f"Semantic search failed ({type(e).__name__}); keywords only.")
+    # Placement is judged per document: a letter has no sections, its text is not a list.
+    folded = [
+        placed
+        for doc in candidate.documents
+        for placed in placed_blocks(redact_blocks(doc.blocks, names))
+    ]
     for c, sem in zip(criteria, semantic, strict=True):
         matched, snippets = keyword_matches(c, text, original)
-        kw = keyword_score(len(matched))
+        listed = listed_only_terms(matched, folded)
+        if job.evidence_for(c) is EvidenceLevel.MENTIONED:
+            found = float(len(matched))
+        else:
+            found = len(matched) - len(listed) * (1 - LISTED_ONLY_CREDIT)
+        kw = keyword_score(found)
         score = max(kw, SEMANTIC_CAP * sem) if sem is not None else kw
         result.criteria.append(
             CriterionResult(
@@ -243,6 +256,7 @@ def screen_candidate(
                 keyword_score=kw,
                 semantic_score=sem,
                 matched=matched,
+                listed_only=listed,
                 snippets=snippets,
             )
         )

@@ -9,9 +9,9 @@ and roadmap.
 
 > Status: early development. The full pipeline runs end to end (ingestion with OCR, job
 > profile, fast screening, redaction, extraction, scoring, ranking, report), from the
-> command line or a local web app. Not built yet: recording review decisions, evaluation
-> and bias probes, and the agentic refinements (evidence agent, pairwise judge, shortlist
-> critic). See [the plan's status section](docs/PLAN.md#11-status-what-is-built-and-what-is-not).
+> command line or a local web app. Not built yet: recording review decisions, bias probes
+> beyond the evaluation set, and the remaining agentic refinements (evidence agent,
+> shortlist critic). See [the plan's status section](docs/PLAN.md#11-status-what-is-built-and-what-is-not).
 
 ## Setup
 
@@ -207,17 +207,57 @@ For each candidate, `run`:
    `[REDACTED: contact details]`;
 3. **extracts** a structured profile (roles, dates, achievements, skills), computing years
    of experience itself;
-4. **scores** it against the profile with a fixed 1-5 rubric: must-have and nice-to-have
-   checks, experience, achievements, skills, and traits (traits count only if you give them
-   a weight). Every judgement must quote the documents; quotes that cannot be found are
-   discarded, a "pass" without a verifiable quote becomes "unclear", and a high score
-   without evidence gets low confidence;
+4. **scores** it against the profile with many small judgements rather than one overall
+   impression (see *How scoring works* below). Every judgement must quote the documents;
+   quotes that cannot be found are discarded, and a judgement without a verifiable quote
+   counts as "not shown";
 5. **ranks** in plain Python: a weighted total, with flags for failed or unclear
    must-haves, low confidence and unreadable documents. A failed must-have ranks the
    candidate last (or removes the score, with `ranking.knockout: exclude`), but it is still
-   shown for a person to overrule.
+   shown for a person to overrule;
+6. **checks close calls:** the best `ranking.repeat_top` (10) are scored a second time,
+   with documents and lists in another order, and the two readings averaged; candidates
+   whose totals are too close to tell apart share a **tier**, and the judge model compares
+   same-tier neighbours head to head, in both orders, moving one up only when both orders
+   agree (`ranking.pairwise_top`).
 
-Output in `out/`: `report.html` (ranking plus evidence for every score), `ranking.csv`,
+### How scoring works
+
+| Part | Default weight | How it is scored |
+|---|---|---|
+| Requirements | 30% | Each must-have and nice-to-have gets the evidence level the documents show. Must-haves count 2/3, nice-to-haves (by their weights) 1/3 |
+| Experience | 30% | Relevance (45%) and seniority (25%) judged 1-5; years in the relevant roles against the years asked for (20%) and how recent they are (10%), computed from the dates |
+| Skills | 25% | Each key skill gets the evidence level shown |
+| Achievements | 15% | 1-5, judged on substance rather than on whether numbers are quoted |
+| Traits | 0% | 1-5, only with evidence; shown unless you give them a weight |
+
+**Evidence levels.** Each requirement and key skill must show at a level to count in full:
+*listed* (named anywhere, e.g. a skills section), *used in work* (in a described role or
+project; the default), or *proven* (applied with ownership, scale or results). Below it,
+credit is partial: listed when use in work is asked for earns half; not shown at all earns
+a quarter for a requirement (unknown, not failed) and nothing for a skill. Where each
+skill's name occurs (work history or a skills list) is found without the model and also
+counts. Set the level for the whole job (`evidence_default`) and per requirement
+(`evidence`); credentials a CV can only state (degrees, certifications, languages) count as
+used once clearly stated. **Match:** `equivalent` (the default) lets comparable
+alternatives count (Pulumi or Bicep for Terraform); `exact` does not. In the web app these
+are the *How evidence counts* switch and the two selectors under each requirement.
+
+Scores the model was unsure about are pulled towards the middle, so an unsupported 5
+cannot top the list. Years of experience asked for come from `target_years` in the
+profile (drafted from the ad), or from the seniority.
+
+### Evaluating the ranking
+
+`cvscore eval evals/cloud-architect --repeats 3` runs a set of fictional candidates with
+known answers and reports how well the ranking matches the expected tiers, whether
+controlled pairs hold (e.g. the same CV with Terraform used in work beats it with Terraform
+only listed; keyword stuffing does not pay; renaming a candidate changes nothing), and how
+much each total moves between runs. It makes fresh model calls. See
+[`evals/README.md`](evals/README.md).
+
+Output in `out/`: `report.html` (ranking plus evidence for every score, with tiers and the
+spread between readings), `ranking.csv`,
 `results.json`. The report shows pseudonymous IDs; add `--reveal-names` to show folder
 names. Model results are cached in `out/.cache`, so re-running after editing the ranking
 weights costs nothing (use `--no-cache` to force fresh calls). Each run is traced in
@@ -252,7 +292,7 @@ role to a deployment (Azure) or model (OpenAI):
 | `extractor` | High-volume structured extraction from documents; OCR by default |
 | `scorer` | Rubric scoring (default for roles you don't set) |
 | `agent` | Drafting the job profile; tool-calling agents later |
-| `judge` | Reserved for the planned pairwise comparison and shortlist review (unused today) |
+| `judge` | Head-to-head comparison of near-tied candidates (`ranking.pairwise_top`) |
 
 Reasoning models (o-series, gpt-5 and later) get no temperature unless you set one;
 `reasoning_effort` can be set per role.
@@ -264,7 +304,7 @@ Reasoning models (o-series, gpt-5 and later) get no temperature unless you set o
 | `ocr` | `enabled`, `role` (whose vision model reads the pages), `dpi`, `max_pages` |
 | `screening` | `semantic`, `similarity_floor`, `similarity_full`, `required_semantic` |
 | `location` | `home_country`: ISO code or name, default `NO` |
-| `ranking` | `knockout` (`flag` or `exclude`), `low_confidence` (threshold for the low-confidence flag), `max_dropped_quotes` |
+| `ranking` | `knockout` (`flag` or `exclude`), `low_confidence` (threshold for the low-confidence flag), `max_dropped_quotes`, `repeat_top` (second readings of the best N; 0 = off), `tie_margin`, `pairwise_top` (judge comparisons among the best N; 0 = off) |
 
 Any value can be overridden by environment variables with the `CVSCORE_` prefix and `__`
 for nesting, e.g. `CVSCORE_AZURE__ENDPOINT`. Use `CVSCORE_CONFIG` to point at another file.

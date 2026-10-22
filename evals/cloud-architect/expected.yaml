@@ -1,0 +1,23 @@
+# What a working ranking must get right on this set (all candidates are fictional).
+# tiers: 1 = strong fit, 2 = adjacent, 3 = unrelated.
+tiers:
+  Ingrid Solheim: 1
+  Hanna Lindqvist: 1
+  Mateo Ruiz: 1
+  Kofi Mensah: 2
+  Tomasz Nowak: 2
+  Elif Kaya: 2
+  Lars Berg: 2
+  Sofia Marino: 3
+  Ahmed Farouk: 3
+  Nora Haugen: 3
+# Controlled pairs: the first must score higher than the second.
+better:
+  - [Kofi Mensah, Tomasz Nowak, "same CV, but Terraform used in work rather than only listed"]
+  - [Mateo Ruiz, Elif Kaya, "architect with equivalent IaC (Bicep) vs an engineer without architecture"]
+  - [Elif Kaya, Nora Haugen, "real Terraform work vs keyword stuffing in a skills list"]
+  - [Ingrid Solheim, Kofi Mensah, "architect vs developer with some IaC"]
+# Pairs that must score about the same (the same CV under another name).
+same:
+  - [Ingrid Solheim, Hanna Lindqvist, "only the name differs"]
+tolerance: 0.05

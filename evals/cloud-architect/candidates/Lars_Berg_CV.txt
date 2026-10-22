@@ -1,0 +1,17 @@
+Lars Berg
+Infrastructure Architect
+
+Experience
+Infrastructure Architect, Coho Manufacturing, 2014 - present
+- Designed the on-premises VMware and storage architecture for three data centres.
+- Led the consolidation of 400 physical servers into a virtualised platform.
+- Wrote the infrastructure security baseline used across the group.
+
+Systems Engineer, Coho Manufacturing, 2008 - 2014
+- Managed Windows and Linux servers and the backup platform.
+
+Skills
+VMware, Windows Server, Linux, networking, backup, PowerShell
+
+Education
+BSc Computer Engineering, 2008

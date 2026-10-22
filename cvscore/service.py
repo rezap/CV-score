@@ -131,7 +131,7 @@ def assess_all(
                     done += len(value.get("assessments", []))
                     if on_progress:
                         on_progress(done, total)
-                elif node == "rank" and value:
+                elif node == "finalize" and value:
                     ranked = value.get("ranked", [])
     finally:
         tracer.flush()

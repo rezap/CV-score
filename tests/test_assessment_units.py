@@ -10,6 +10,7 @@ from cvscore.config import ModelRole, RankingConfig
 from cvscore.evidence import quote_in, verify
 from cvscore.extract import CandidateProfileDraft, extract_profile, parse_date, years_of_experience
 from cvscore.job import JobProfileDraft, draft_job_profile, load_job_profile, save_job_profile
+from cvscore.judge import PairwiseDraft, judge_ties
 from cvscore.models import (
     BlockKind,
     CandidateDocuments,
@@ -17,9 +18,11 @@ from cvscore.models import (
     Dimension,
     DimensionScore,
     DocType,
+    EvidenceLevel,
     ExperienceEntry,
     Flag,
     JobProfile,
+    MatchMode,
     Requirement,
     RequirementCheck,
     RequirementStatus,
@@ -28,9 +31,17 @@ from cvscore.models import (
     TextBlock,
     Trait,
 )
-from cvscore.rank import rank, total_score
+from cvscore.rank import assign_tiers, combine_passes, rank, total_score
 from cvscore.redact import redact, redact_blocks
-from cvscore.score import ScoringDraft, score_candidate, skill_coverage, to_unit
+from cvscore.score import (
+    ScoringDraft,
+    recency_value,
+    score_candidate,
+    shrink,
+    skill_coverage,
+    target_years,
+    to_unit,
+)
 from tests.fakes import FakeLLM
 
 CV_TEXT = (
@@ -215,11 +226,23 @@ def job_draft() -> dict[str, Any]:
         "domain": "analytics",
         "summary": "Build data platforms.",
         "responsibilities": ["Build pipelines", "Lead engineers"],
-        "must_have": [{"description": "5+ years in data engineering"}],
-        "nice_to_have": [
-            {"description": "Spark", "importance": "high"},
-            {"description": "dbt", "importance": "low"},
+        "must_have": [
+            {
+                "description": "5+ years in data engineering",
+                "evidence": "applied",
+                "match": "equivalent",
+            }
         ],
+        "nice_to_have": [
+            {"description": "Spark", "importance": "high", "evidence": "proven", "match": "exact"},
+            {
+                "description": "dbt",
+                "importance": "low",
+                "evidence": "applied",
+                "match": "equivalent",
+            },
+        ],
+        "target_years": 5,
         "key_skills": ["Python", "SQL", "Apache Spark", "Kafka"],
         "traits": [
             {"name": "Mentoring", "definition": "Helps others grow.", "evidence_examples": []}
@@ -243,6 +266,14 @@ def test_job_profile_draft_and_yaml_round_trip(tmp_path: Path) -> None:
     assert job.id == "senior-data-engineer"
     assert [r.id for r in job.must_have] == ["M1"]
     assert [(r.id, r.weight) for r in job.nice_to_have] == [("N1", 2.0), ("N2", 0.5)]
+    # Only settings that differ from the job's defaults are stored on the item.
+    assert job.evidence_default is EvidenceLevel.APPLIED and job.target_years == 5
+    assert (job.must_have[0].evidence, job.must_have[0].match) == (None, None)
+    assert (job.nice_to_have[0].evidence, job.nice_to_have[0].match) == (
+        EvidenceLevel.PROVEN,
+        MatchMode.EXACT,
+    )
+    assert job.evidence_for(job.must_have[0]) is EvidenceLevel.APPLIED
     assert job.traits[0].id == "T1"
     assert job.weights[Dimension.TRAITS] == 0.0
     # Duplicate and blank terms dropped; a criterion without terms is left out.
@@ -262,8 +293,8 @@ def test_job_profile_draft_and_yaml_round_trip(tmp_path: Path) -> None:
 # --- scoring --------------------------------------------------------------------------
 
 
-def make_job() -> JobProfile:
-    return JobProfile(
+def make_job(**overrides: Any) -> JobProfile:
+    job = JobProfile(
         id="job",
         title="Senior Data Engineer",
         must_have=[
@@ -276,24 +307,48 @@ def make_job() -> JobProfile:
             Trait(id="T1", name="Mentoring", definition="Helps others grow."),
             Trait(id="T2", name="Curiosity", definition="Learns new things."),
         ],
+        target_years=5,
     )
+    return job.model_copy(update=overrides)
+
+
+LEAD = {"doc": "cv", "quote": "Led a team of 5 engineers building the streaming platform"}
+SKILLS = {"doc": "cv", "quote": "Python, SQL, Apache Spark"}
 
 
 def scoring_draft(**overrides: Any) -> dict[str, Any]:
-    q = {"doc": "cv", "quote": "Led a team of 5 engineers building the streaming platform"}
     draft = {
         "requirements": [
             {
                 "requirement_id": "M1",
-                "status": "pass",
+                "level": "applied",
+                "contradicted": False,
                 "rationale": "Data engineer.",
-                "quotes": [q],
+                "quotes": [LEAD],
             },
-            {"requirement_id": "M2", "status": "pass", "rationale": "Says so.", "quotes": []},
+            # A level without a verifiable quote counts as not shown.
+            {
+                "requirement_id": "M2",
+                "level": "proven",
+                "contradicted": False,
+                "rationale": "Says so.",
+                "quotes": [],
+            },
         ],
-        "experience": {"score": 5, "confidence": "high", "rationale": "Relevant.", "quotes": [q]},
+        "skills": [
+            {"skill": "Python", "level": "mentioned", "quotes": [SKILLS]},
+            {"skill": "Apache Spark", "level": "proven", "quotes": []},  # unverified
+            {"skill": "Kafka", "level": "none", "quotes": []},
+        ],
+        "experience": {
+            "relevant_roles": [0],
+            "relevance": 5,
+            "seniority": 4,
+            "confidence": "high",
+            "rationale": "Relevant.",
+            "quotes": [LEAD],
+        },
         "achievements": {"score": 4, "confidence": "high", "rationale": "Good.", "quotes": []},
-        "skills": {"score": 3, "confidence": "medium", "rationale": "Some.", "quotes": [q]},
         "traits": [
             {
                 "trait_id": "T1",
@@ -308,6 +363,37 @@ def scoring_draft(**overrides: Any) -> dict[str, Any]:
     return draft
 
 
+def cv_sources() -> list[SourceDocument]:
+    blocks = [
+        TextBlock(kind=BlockKind.HEADING, text="Experience"),
+        TextBlock(
+            kind=BlockKind.LIST_ITEM,
+            text="Led a team of 5 engineers building the streaming platform in Python.",
+            section="Experience",
+        ),
+        TextBlock(kind=BlockKind.HEADING, text="Skills"),
+        TextBlock(kind=BlockKind.LIST_ITEM, text="Python, SQL, Apache Spark", section="Skills"),
+    ]
+    return [
+        SourceDocument(
+            doc_type=DocType.CV,
+            path="cv.pdf",
+            sha256="x",
+            text=CV_TEXT,
+            blocks=blocks,
+            extractor="test",
+            quality=1.0,
+        )
+    ]
+
+
+def profile_with_role(**kw: Any) -> CandidateProfile:
+    role = ExperienceEntry(
+        title="Senior Data Engineer", start=date(2019, 1, 1), is_current=True, **kw
+    )
+    return CandidateProfile(candidate_id="c-1", years_experience=5.0, experience=[role])
+
+
 def test_skill_coverage() -> None:
     profile = CandidateProfile(candidate_id="c", skills=["python"])
     coverage, matched = skill_coverage(["Python", "Apache Spark", "Kafka"], profile, DOCS)
@@ -315,25 +401,45 @@ def test_skill_coverage() -> None:
     assert coverage == 0.67
 
 
-def test_score_candidate_guards_unsupported_judgements() -> None:
+def test_score_candidate_levels_and_guards() -> None:
     fake = FakeLLM({ScoringDraft: lambda _: scoring_draft()})
-    profile = CandidateProfile(candidate_id="c-1", years_experience=5.0)
-    card = score_candidate(make_job(), profile, DOCS, fake.provider())
+    today = date(2024, 1, 1)
+    card = score_candidate(
+        make_job(), profile_with_role(), DOCS, fake.provider(), sources=cv_sources(), today=today
+    )
     assert fake.calls[0][0] is ModelRole.SCORER
 
     checks = {c.requirement_id: c for c in card.requirement_checks}
-    assert checks["M1"].status is RequirementStatus.PASS
-    assert checks["M2"].status is RequirementStatus.UNCLEAR  # "pass" without evidence
-    assert "Downgraded" in checks["M2"].rationale
+    assert (checks["M1"].status, checks["M1"].value) == (RequirementStatus.PASS, 1.0)
+    # "proven" without a quote: counted as not shown, and unclear rather than failed.
+    assert checks["M2"].status is RequirementStatus.UNCLEAR and checks["M2"].value == 0.25
+    assert checks["M2"].observed_level == "none" and "no quote" in checks["M2"].rationale
     assert checks["N1"].status is RequirementStatus.UNCLEAR  # not assessed at all
     assert not checks["N1"].must_have
 
+    # Must-haves count 2/3, nice-to-haves 1/3: 2/3 * (1 + 0.25) / 2 + 1/3 * 0.25.
     req = card.score(Dimension.REQUIREMENTS)
-    assert req is not None and req.score == 0.75  # (1 + 0.5) / 2
+    assert req is not None and req.score == round(2 / 3 * 0.625 + 1 / 3 * 0.25, 3)
+
+    skills = {s.skill: s for s in card.skill_checks}
+    # Python is in a work bullet as well as the skills list: placement makes it "applied".
+    assert skills["Python"].observed_level == "applied" and skills["Python"].value == 1.0
+    assert skills["Python"].found_in == ["work", "skills list"]
+    # Spark: "proven" was not quoted; it only sits in the skills list -> listed, half.
+    assert skills["Apache Spark"].observed_level == "mentioned"
+    assert skills["Apache Spark"].value == 0.5
+    assert skills["Kafka"].observed_level == "none" and skills["Kafka"].value == 0.0
+    sk = card.score(Dimension.SKILLS)
+    assert sk is not None and sk.score == 0.5 and "Apache Spark" in sk.rationale
+
+    # Experience: relevance 5 (1.0), seniority 4 (0.75), 5 of 5 years, current role.
     exp = card.score(Dimension.EXPERIENCE)
-    assert exp is not None and exp.score == 1.0 and exp.confidence == 0.9
+    assert exp is not None and exp.score == pytest.approx(0.45 + 0.25 * 0.75 + 0.2 + 0.1, abs=1e-3)
+    assert card.features["relevant_years"] == 5.0 and card.features["years_since_relevant"] == 0.0
+
+    # Achievements: 4 (0.75) with no quote -> low confidence, pulled towards the middle.
     ach = card.score(Dimension.ACHIEVEMENTS)
-    assert ach is not None and ach.score == 0.75 and ach.confidence == 0.3  # no evidence
+    assert ach is not None and ach.confidence == 0.3 and ach.score == round(shrink(0.75, "low"), 3)
     assert any("achievements: high score without verifiable evidence" in n for n in card.notes)
 
     traits = {t.trait_id: t for t in card.trait_scores}
@@ -341,8 +447,66 @@ def test_score_candidate_guards_unsupported_judgements() -> None:
     assert traits["T2"].score is None  # no evidence -> insufficient, not low
     trait_dim = card.score(Dimension.TRAITS)
     assert trait_dim is not None and trait_dim.score == 1.0 and trait_dim.confidence == 0.5
-    assert card.features["years_experience"] == 5.0
-    assert card.features["skill_coverage"] == 0.67
+
+
+def test_evidence_level_decides_credit() -> None:
+    """The same CV, with Terraform only in the skills list, earns full credit when a
+    mention is enough and half when use in work is asked for."""
+    draft = scoring_draft(
+        requirements=[
+            {
+                "requirement_id": "M1",
+                "level": "mentioned",
+                "contradicted": False,
+                "rationale": "Listed.",
+                "quotes": [SKILLS],
+            }
+        ]
+    )
+    fake = FakeLLM({ScoringDraft: lambda _: draft})
+    values = {}
+    for level in EvidenceLevel:
+        job = make_job(
+            must_have=[Requirement(id="M1", description="Spark", evidence=level)], nice_to_have=[]
+        )
+        card = score_candidate(job, profile_with_role(), DOCS, fake.provider())
+        [check] = card.requirement_checks
+        values[level] = (check.status, round(check.value or 0, 2))
+    assert values == {
+        EvidenceLevel.MENTIONED: (RequirementStatus.PASS, 1.0),
+        EvidenceLevel.APPLIED: (RequirementStatus.PARTIAL, 0.5),
+        EvidenceLevel.PROVEN: (RequirementStatus.PARTIAL, 0.33),
+    }
+    # A contradiction is a fail whatever the level.
+    contradicted = scoring_draft(requirements=[{**draft["requirements"][0], "contradicted": True}])
+    card = score_candidate(
+        make_job(must_have=[Requirement(id="M1", description="Spark")], nice_to_have=[]),
+        profile_with_role(),
+        DOCS,
+        FakeLLM({ScoringDraft: lambda _: contradicted}).provider(),
+    )
+    assert card.requirement_checks[0].status is RequirementStatus.FAIL
+
+
+def test_second_reading_is_a_fresh_call_in_another_order() -> None:
+    fake = FakeLLM({ScoringDraft: lambda _: scoring_draft()})
+    job = make_job()
+    score_candidate(job, profile_with_role(), DOCS, fake.provider())
+    score_candidate(job, profile_with_role(), DOCS, fake.provider(), variant=1)
+    first, second = (str(c[2][-1].content) for c in fake.calls)
+    assert first != second and '"assessment_pass": 2' in second
+    # Documents and lists are presented in reverse order.
+    assert first.index('type="cv"') < first.index('type="cover_letter"')
+    assert second.index('type="cv"') > second.index('type="cover_letter"')
+
+
+def test_experience_helpers() -> None:
+    assert target_years(make_job(target_years=None, seniority="Senior")) == 6.0
+    assert target_years(make_job(target_years=None, title="Junior developer")) == 1.0
+    assert target_years(make_job(target_years=None, title="Analyst", seniority=None)) == 4.0
+    assert [recency_value(y) for y in (None, 0, 1, 3.5, 6, 10)] == [0.0, 1.0, 1.0, 0.5, 0.0, 0.0]
+    assert shrink(1.0, "high") == 1.0 and shrink(1.0, "low") == pytest.approx(0.8)
+    assert shrink(0.0, "medium") == pytest.approx(0.075)
 
 
 def test_to_unit_clamps() -> None:
@@ -409,3 +573,72 @@ def test_screening_falls_back_to_key_skills() -> None:
         ("Apache Spark", ["Apache Spark"], False),
         ("Kafka", ["Kafka"], False),
     ]
+
+
+def test_combine_passes_averages_and_records_spread() -> None:
+    job = make_job(weights={Dimension.EXPERIENCE: 1.0})
+    a = card("a", {Dimension.EXPERIENCE: 0.8}, [RequirementStatus.FAIL])
+    b = card("a", {Dimension.EXPERIENCE: 0.6}, [RequirementStatus.PASS])
+    combined = combine_passes([a, b], job)
+    exp = combined.score(Dimension.EXPERIENCE)
+    assert exp is not None and exp.score == 0.7 and combined.spread == 0.2
+    # The readings disagree on a must-have failing: unclear, for a person to check.
+    a.requirement_checks[0].must_have = True
+    combined = combine_passes([a, b], job)
+    assert combined.requirement_checks[0].status is RequirementStatus.UNCLEAR
+    assert combine_passes([a], job).spread is None
+
+
+def test_tiers_group_totals_too_close_to_call() -> None:
+    cards = [card(c, {}, []) for c in "abcde"]
+    for c, total, spread in zip(
+        cards, [0.80, 0.78, 0.70, 0.60, 0.50], [None, None, 0.0, 0.3, 0.0], strict=True
+    ):
+        c.total, c.spread = total, spread
+    cards[4].flags = [Flag.KNOCKOUT_FAILED]
+    assign_tiers(cards, margin=0.04)
+    # 0.80/0.78 within the margin; 0.70 apart; 0.60 within the 0.15 mean spread of 0.70/0.60.
+    assert [c.tier for c in cards] == [1, 1, 2, 2, None]
+
+
+def test_judge_swaps_neighbours_only_when_both_orders_agree() -> None:
+    def judge(messages: Any) -> dict[str, Any]:
+        text = str(messages[-1].content)
+        a = text.split('<candidate id="A">')[1].split("</candidate>")[0]
+        # Prefers "strong" over anyone; between the others it always answers "A"
+        # (position bias), which the second order cancels out.
+        if "strong" in a:
+            return {"better": "A", "rationale": "Stronger evidence."}
+        if "strong" in text:
+            return {"better": "B", "rationale": "Stronger evidence."}
+        return {"better": "A", "rationale": "First seems fine."}
+
+    fake = FakeLLM({PairwiseDraft: judge})
+    cards = [card(c, {}, []) for c in ["upper", "strong", "third"]]
+    for c, total in zip(cards, [0.80, 0.79, 0.78], strict=True):
+        c.total, c.tier = total, 1
+    docs = {c.candidate_id: {DocType.CV: f"CV of {c.candidate_id}"} for c in cards}
+    ordered = judge_ties(cards, make_job(), docs, fake.provider(), top=10)
+    assert [c.candidate_id for c in ordered] == ["strong", "upper", "third"]
+    assert [c.rank for c in ordered] == [1, 2, 3]
+    assert all(role is ModelRole.JUDGE for role, _, _ in fake.calls)
+    assert len(fake.calls) == 4  # two neighbour pairs, both orders
+    assert any("moved up" in n for n in ordered[0].notes)
+    # strong vs third: preferred in both orders, confirmed (no move needed).
+    assert any("confirmed this candidate over third" in n for n in ordered[0].notes)
+    # Different tiers are never compared.
+    cards[2].tier = 2
+    fake.calls.clear()
+    judge_ties(cards, make_job(), docs, fake.provider(), top=10)
+    assert len(fake.calls) == 2
+
+
+def test_judge_position_bias_does_not_move_anyone() -> None:
+    fake = FakeLLM({PairwiseDraft: lambda _: {"better": "A", "rationale": "First one."}})
+    cards = [card(c, {}, []) for c in ["one", "two"]]
+    for c in cards:
+        c.total, c.tier = 0.7, 1
+    docs = {c.candidate_id: {DocType.CV: c.candidate_id} for c in cards}
+    ordered = judge_ties(cards, make_job(), docs, fake.provider(), top=10)
+    assert [c.candidate_id for c in ordered] == ["one", "two"]
+    assert any("could not separate" in n for n in ordered[0].notes)

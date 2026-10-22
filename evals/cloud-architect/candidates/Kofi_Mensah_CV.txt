@@ -1,0 +1,18 @@
+Kofi Mensah
+Senior Backend Developer
+
+Experience
+Senior Backend Developer, Tailspin Travel, 2017 - present
+- Built booking services in Python running on AWS Lambda and ECS.
+- Wrote the Terraform for the team's AWS accounts, networks and databases.
+- Improved API response times by 35% by redesigning the caching layer.
+
+Backend Developer, Wide World Importers, 2014 - 2017
+- Developed order processing services in Python and PostgreSQL.
+- Set up CI/CD pipelines in Jenkins.
+
+Skills
+Python, AWS, Terraform, Docker, CI/CD, PostgreSQL
+
+Education
+MSc Computer Science, 2014

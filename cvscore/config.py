@@ -138,6 +138,14 @@ class RankingConfig(BaseModel):
     knockout: Literal["flag", "exclude"] = "flag"
     low_confidence: float = 0.5  # dimension confidence below this raises a flag
     max_dropped_quotes: int = 3  # this many unverifiable model quotes raises a flag
+    # The best N candidates are scored a second time (lists and documents in another
+    # order) and the two readings averaged; their difference is shown as the spread.
+    repeat_top: int = Field(default=10, ge=0)
+    # Totals closer than this (or than their spreads) share a tier: too close to call.
+    tie_margin: float = Field(default=0.04, ge=0)
+    # Neighbours in the same tier among the best N are compared head to head by the
+    # judge model, in both orders; it reorders them only when both orders agree.
+    pairwise_top: int = Field(default=10, ge=0)
 
 
 class OCRConfig(BaseModel):

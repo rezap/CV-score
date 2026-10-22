@@ -91,10 +91,28 @@ export const regionOf = (c: CandidateSummary | undefined): RegionKey => {
   return region === "norway" ? "home" : ((region as RegionKey | null | undefined) ?? "unknown");
 };
 
+/** How a requirement or skill must show in the documents to count in full. */
+export type EvidenceLevel = "mentioned" | "applied" | "proven";
+export type MatchMode = "exact" | "equivalent";
+export type ObservedLevel = "none" | EvidenceLevel;
+
+export const EVIDENCE_LEVELS: { value: EvidenceLevel; label: string; hint: string }[] = [
+  { value: "mentioned", label: "Listed", hint: "Named anywhere, a skills list is enough" },
+  { value: "applied", label: "Used in work", hint: "Used in a described role or project" },
+  { value: "proven", label: "Proven", hint: "Applied with ownership, scale or results" },
+];
+
+export const MATCH_MODES: { value: MatchMode; label: string; hint: string }[] = [
+  { value: "equivalent", label: "or equivalent", hint: "Comparable alternatives count too" },
+  { value: "exact", label: "exactly this", hint: "Only what is named counts" },
+];
+
 export interface Requirement {
   id: string;
   description: string;
   weight: number;
+  evidence?: EvidenceLevel | null; // null: the job's default
+  match?: MatchMode | null;
 }
 
 export interface Trait {
@@ -111,6 +129,7 @@ export interface ScreeningCriterion {
   terms: string[];
   required: boolean;
   weight: number;
+  evidence?: EvidenceLevel | null;
 }
 
 export interface CriterionResult {
@@ -122,6 +141,7 @@ export interface CriterionResult {
   keyword_score: number;
   semantic_score: number | null;
   matched: string[];
+  listed_only?: string[]; // matched terms found only in a skills list or summary
   snippets: string[];
 }
 
@@ -152,6 +172,9 @@ export interface JobProfile {
   traits: Trait[];
   weights: Record<Dimension, number>;
   screening: ScreeningCriterion[];
+  evidence_default?: EvidenceLevel;
+  match_default?: MatchMode;
+  target_years?: number | null;
 }
 
 export interface Evidence {
@@ -165,8 +188,20 @@ export interface RequirementCheck {
   requirement_id: string;
   description: string;
   must_have: boolean;
-  status: "pass" | "fail" | "unclear";
+  status: "pass" | "partial" | "fail" | "unclear";
   rationale: string;
+  evidence: Evidence[];
+  required_level?: EvidenceLevel | null;
+  observed_level?: ObservedLevel | null;
+  value?: number | null;
+}
+
+export interface SkillCheck {
+  skill: string;
+  required_level: EvidenceLevel;
+  observed_level: ObservedLevel;
+  value: number;
+  found_in: string[];
   evidence: Evidence[];
 }
 
@@ -189,11 +224,14 @@ export interface TraitScore {
 export interface ScoreCard {
   candidate_id: string;
   requirement_checks: RequirementCheck[];
+  skill_checks?: SkillCheck[];
   scores: DimensionScore[];
   trait_scores: TraitScore[];
   features: Record<string, number | null>;
   total: number | null;
   rank: number | null;
+  spread?: number | null; // difference between two readings
+  tier?: number | null; // candidates too close to call share a tier
   flags: string[];
   notes: string[];
 }

@@ -162,9 +162,16 @@ CV out (listed last, with the reason). Used alone (`cvscore screen`, "Quick scre
 pick the best N for in-depth assessment (`run --shortlist N`).
 
 ### 3.5 Candidate assessment subgraph (`cvscore.assess`) — partly built
-**Built:** a LangGraph fan-out per candidate (redact → extract → one rubric-scoring call →
-quote verification). **Not built:** the embedding-based baseline scorers (skills use a
-lexical match) and the evidence agent (step 3).
+**Built:** a LangGraph fan-out per candidate (redact → extract → one scoring call →
+quote verification). The scoring call returns many small judgements: an evidence level
+(none / mentioned / applied / proven) per requirement and per key skill, judged with each
+item's match mode (exact or equivalent); relevance and seniority 1-5 plus the relevant
+roles, whose years and recency are computed from their dates; achievements 1-5. Python
+turns levels into credit against the level each item asks for (`evidence`, job default
+`applied`), counts nice-to-haves, shrinks unsure scores towards the middle, and uses where
+a skill's name occurs (work history or a skills list) as a deterministic floor. The best N
+are scored a second time and averaged (`ranking.repeat_top`). **Not built:** the
+embedding-based baseline scorers and the evidence agent (step 3).
 
 For each candidate, run in parallel with the LangGraph `Send` API and concurrency limits:
 
@@ -192,7 +199,11 @@ For each candidate, run in parallel with the LangGraph `Send` API and concurrenc
 
 ### 3.6 Ranking & review (`cvscore.rank`) — aggregation built
 **Built:** the weighted sum with knock-out handling (`ranking.knockout: flag | exclude`)
-and flags. **Not built:** the pairwise judge, the shortlist critic and the review interrupt.
+and flags. **Built:** tiers (totals within `ranking.tie_margin`, or within their spreads, are too close
+to call) and the pairwise judge for same-tier neighbours among the best
+`ranking.pairwise_top`, judged in both orders and applied only when both agree (adjacent
+swaps rather than Bradley-Terry). **Not built:** the shortlist critic and the review
+interrupt.
 
 - **Aggregate:** a weighted sum in Python using the JobProfile weights, with knock-out
   handling (exclude or flag, configurable).
@@ -254,7 +265,7 @@ classic one. Reasoning models get no temperature unless one is set. Concurrency 
   - `extractor`: a cheaper or faster model, high volume
   - `scorer`
   - `agent`: tool calling
-  - `judge`: the strongest model, used for pairwise and critic work
+  - `judge`: the strongest model, used for pairwise (built) and critic work
 - **Reliability:** retries with backoff on 429s, a concurrency semaphore sized to the
   deployment's TPM quota, request timeouts, and a disk/SQLite LLM cache keyed by
   (prompt version, model, input hash) so re-runs are cheap.
@@ -347,8 +358,14 @@ pyproject.toml         # uv, ruff, mypy, pytest
   without Azure. A gated job (`tests/live`, manual or `live-test` label) runs the whole
   pipeline against a real OpenAI model on fictional candidates and checks ranking order,
   verified quotes and that no names, emails or phones reach any prompt.
-- Everything else in this section (datasets, agreement with humans, consistency, bias
-  probes, agent checks) is **not built** yet.
+- **Evaluation set (built):** `evals/cloud-architect` holds 10 fictional candidates with
+  expected tiers, controlled pairs (Terraform used in work vs only listed, equivalent IaC,
+  keyword stuffing) and a renamed duplicate; `cvscore eval` runs it N times without the
+  cache and reports tier-order accuracy, Kendall's tau, the pairs, and the spread between
+  runs. An offline test runs it with a rule-based fake model; the live CI job runs it
+  against the real model.
+- **Not built:** Langfuse datasets and experiments, agreement with recruiter rankings,
+  format invariance, broader bias probes (gender, age, school), agent checks.
 
 ## 8. Legal / ethical guardrails (important)
 
@@ -373,9 +390,9 @@ requires bias audits. The design therefore assumes:
 | M5 | Baseline graph ✅ | LangGraph fan-out per candidate: redact → extract → rubric scoring (one call) → plain-Python ranking; `cvscore run`. Embedding-based scorers not built (lexical skill coverage instead) |
 | M5a | Screening ✅ | Keyword + semantic screening against the profile's criteria, required gate, `cvscore screen`, `run --shortlist N` |
 | M6 | Agentic layer | Evidence agent + tools (quote validation and rule-based redaction are built) |
-| M7 | Ranking agents & review | Pairwise judge, shortlist critic, review interrupt; recording decisions/overrides in the web app |
+| M7 | Ranking agents & review | Pairwise judge for near-ties ✅; shortlist critic, review interrupt, recording decisions/overrides in the web app still to do |
 | M8 | Reporting ✅ (MVP) | `report.html` (evidence per score, pseudonymous by default), `ranking.csv`, `results.json`, screening reports. Still to do: `.xlsx`, trace links, location columns |
-| M9 | Evaluation | Langfuse datasets/experiments, bias probes, consistency checks (a live end-to-end test runs in CI) |
+| M9 | Evaluation (partly ✅) | Evaluation set + `cvscore eval` (tiers, controlled pairs, name invariance, spread between runs) ✅; Langfuse datasets/experiments and broader bias probes still to do |
 | M10 | Web app ✅ (MVP) | `cvscore serve`: folder picker, grouping review, location filter (configurable home country), profile editor, screening/assessment modes, foldable results, links to originals |
 | M11 | Extras | Specific form/ATS adapters, data retention and run deletion, NER redaction |
 
@@ -401,18 +418,21 @@ requires bias audits. The design therefore assumes:
 **Built:** ingestion (layout-aware PDF/DOCX, legacy formats, images, OCR fallback,
 content-based grouping, forms, cache), job profile drafting with screening criteria,
 keyword/semantic screening with a required gate and shortlist, rule-based redaction,
-structured extraction with verified quotes, one-call rubric scoring, plain-Python ranking
-with knock-outs and flags, HTML/CSV/JSON reports, Langfuse tracing with masking, Azure
+structured extraction with verified quotes, decomposed scoring with evidence levels and
+match modes, nice-to-haves counted, computed experience duration and recency, repeated
+readings with spread, tiers and a pairwise judge for near-ties, plain-Python ranking with
+knock-outs and flags, an evaluation set with `cvscore eval`, HTML/CSV/JSON reports, Langfuse tracing with masking, Azure
 (Entra ID) and OpenAI providers, location detection with a configurable home country, the
 CLI, and the web app.
 
 **Not built, in suggested order:**
 1. **Human review loop:** record decisions, overrides and notes in the web app; log them
    as Langfuse scores; a LangGraph interrupt/resume for the CLI.
-2. **Evaluation:** Langfuse datasets and experiments, counterfactual bias probes,
-   consistency across runs and formats, agreement with recruiter rankings.
+2. **Evaluation depth:** more evaluation sets, Langfuse datasets and experiments,
+   broader counterfactual bias probes, format invariance, agreement with recruiter
+   rankings.
 3. **Evidence agent** for unclear must-haves and low-confidence scores.
-4. **Pairwise judge and shortlist critic** (the `judge` role is configured but unused).
+4. **Shortlist critic.**
 5. **Langfuse depth:** managed prompts, scores, trace links in the report.
 6. **Redaction depth:** NER, pronouns, age from graduation years.
 7. **Data retention:** a retention setting and deleting runs and caches.

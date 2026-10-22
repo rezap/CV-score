@@ -189,8 +189,39 @@ def test_live_end_to_end(workdir: Path, monkeypatch: pytest.MonkeyPatch) -> None
     leaked = [s for s in SECRETS if s.lower() in sent.lower()]
     assert not leaked, leaked
     candidate_calls = sum("<document type=" in p for p in prompts)
-    assert candidate_calls == 8  # 4 readable candidates x (extraction + scoring)
+    scoring = sum("<candidate_profile>" in p for p in prompts)
+    judging = sum('<candidate id="A">' in p for p in prompts)
+    # 4 readable candidates: one extraction each; scoring once each plus a second reading
+    # of those not knocked out; the judge only for same-tier neighbours, in both orders.
+    assert candidate_calls - scoring - judging == 4
+    assert 4 <= scoring <= 8 and judging % 2 == 0, (scoring, judging)
     ocr_calls = sum(p == "Transcribe this page." for p in prompts)
     assert ocr_calls == 2  # the readable scan and the blank one
 
     assert (out / "report.html").is_file()
+
+
+def test_live_evaluation_set(workdir: Path) -> None:
+    """The bundled evaluation set (fictional cloud architects) against the real model:
+    print the full report, and check what a working ranking must get right."""
+    from cvscore.config import load_settings
+    from cvscore.evaluate import run_eval
+
+    settings = load_settings(workdir / "cvscore.yaml")
+    report = run_eval(
+        Path(__file__).resolve().parents[2] / "evals" / "cloud-architect",
+        settings,
+        lambda s: settings_provider(s, cache_dir=None),
+        repeats=2,
+    )
+    print(report.summary())
+    keep = ORIGINAL_ENV.get("CVSCORE_LIVE_OUT")
+    if keep:
+        out = (ORIGINAL_CWD / keep).resolve()
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "eval.json").write_text(report.model_dump_json(indent=2))
+    assert report.tier_order_accuracy is not None and report.tier_order_accuracy >= 0.8, (
+        report.summary()
+    )
+    stuffing = next(p for p in report.better if p.b == "Nora Haugen")
+    assert stuffing.ok, report.summary()  # keyword stuffing must not pay

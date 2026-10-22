@@ -1476,3 +1476,111 @@ mark.redaction {
     display: none;
   }
 }
+
+/* --- Evidence levels ------------------------------------------------------------------ */
+
+.evidence-defaults .row {
+  gap: 18px;
+  margin-top: 6px;
+}
+
+.segmented {
+  display: inline-flex;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  overflow: hidden;
+  margin: 4px 0 6px;
+}
+
+.segmented button {
+  border: none;
+  border-radius: 0;
+  border-right: 1px solid var(--line-strong);
+  padding: 6px 14px;
+  background: var(--panel);
+}
+
+.segmented button:last-child {
+  border-right: none;
+}
+
+.segmented button.on {
+  background: var(--accent);
+  color: var(--accent-text);
+}
+
+.req {
+  flex-wrap: wrap;
+}
+
+.req-opts {
+  flex-basis: 100%;
+  display: flex;
+  gap: 6px;
+  padding-left: 46px;
+}
+
+.req-opts select,
+.criterion select {
+  font-size: 0.8rem;
+  padding: 2px 6px;
+  color: var(--muted);
+}
+
+.req-opts select.set,
+.criterion select.set {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.status.partial {
+  color: var(--b-partial);
+  background: var(--b-partial-soft);
+}
+
+.chip.listed {
+  border-style: dashed;
+  color: var(--muted);
+}
+
+.skill-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.skill-check {
+  font-size: 0.8rem;
+  border-radius: 999px;
+  padding: 1px 10px;
+  border: 1px solid var(--line-strong);
+}
+
+.skill-check em {
+  font-style: normal;
+  color: var(--muted);
+}
+
+.skill-check.full {
+  background: var(--b-strong-soft);
+  border-color: transparent;
+}
+
+.skill-check.part {
+  background: var(--b-partial-soft);
+  border-color: transparent;
+}
+
+.skill-check.none {
+  opacity: 0.7;
+}
+
+.total-cell {
+  white-space: nowrap;
+}
+
+.tie {
+  color: var(--accent);
+  font-weight: 700;
+  cursor: help;
+}

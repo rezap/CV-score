@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypeVar
 
 import yaml
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -13,19 +13,35 @@ from pydantic import BaseModel
 
 from cvscore.config import ModelRole
 from cvscore.llm.structured import LLMProvider
-from cvscore.models import DEFAULT_WEIGHTS, JobProfile, Requirement, ScreeningCriterion, Trait
+from cvscore.models import (
+    DEFAULT_WEIGHTS,
+    EvidenceLevel,
+    JobProfile,
+    MatchMode,
+    Requirement,
+    ScreeningCriterion,
+    Trait,
+)
 from cvscore.prompts import JOB_PROFILE_SYSTEM
 
 # --- Model-facing schema (strict: all fields required, no defaults) -------------------
 
 
+Evidence = Literal["mentioned", "applied", "proven"]
+Match = Literal["exact", "equivalent"]
+
+
 class _MustHave(BaseModel):
     description: str
+    evidence: Evidence
+    match: Match
 
 
 class _NiceToHave(BaseModel):
     description: str
     importance: Literal["low", "medium", "high"]
+    evidence: Evidence
+    match: Match
 
 
 class _Trait(BaseModel):
@@ -52,9 +68,11 @@ class JobProfileDraft(BaseModel):
     key_skills: list[str]
     traits: list[_Trait]
     screening: list[_Screening]
+    target_years: float | None
 
 
 _IMPORTANCE_WEIGHT = {"low": 0.5, "medium": 1.0, "high": 2.0}
+_T = TypeVar("_T")
 
 
 def slugify(text: str) -> str:
@@ -70,15 +88,25 @@ def from_draft(draft: JobProfileDraft) -> JobProfile:
         summary=draft.summary,
         responsibilities=draft.responsibilities,
         must_have=[
-            Requirement(id=f"M{i}", description=m.description)
+            Requirement(
+                id=f"M{i}",
+                description=m.description,
+                evidence=_unless_default(EvidenceLevel(m.evidence), EvidenceLevel.APPLIED),
+                match=_unless_default(MatchMode(m.match), MatchMode.EQUIVALENT),
+            )
             for i, m in enumerate(draft.must_have, 1)
         ],
         nice_to_have=[
             Requirement(
-                id=f"N{i}", description=n.description, weight=_IMPORTANCE_WEIGHT[n.importance]
+                id=f"N{i}",
+                description=n.description,
+                weight=_IMPORTANCE_WEIGHT[n.importance],
+                evidence=_unless_default(EvidenceLevel(n.evidence), EvidenceLevel.APPLIED),
+                match=_unless_default(MatchMode(n.match), MatchMode.EQUIVALENT),
             )
             for i, n in enumerate(draft.nice_to_have, 1)
         ],
+        target_years=draft.target_years,
         key_skills=draft.key_skills,
         traits=[
             Trait(
@@ -105,6 +133,12 @@ def from_draft(draft: JobProfileDraft) -> JobProfile:
         ]
         or screening_from_skills(draft.key_skills),
     )
+
+
+def _unless_default(value: _T, default: _T) -> _T | None:
+    """Store an item's setting only when it differs from the job's default, so changing
+    the default in the editor changes every item that has not been set on its own."""
+    return None if value == default else value
 
 
 def _unique(terms: list[str]) -> list[str]:
@@ -141,6 +175,10 @@ _YAML_HEADER = """\
 # Hiring profile used to assess every candidate. Review and edit before running.
 # - must_have: knock-out requirements (a clear "fail" flags the candidate).
 # - nice_to_have / traits: weight = relative importance within the list.
+# - evidence (per requirement, or evidence_default): how it must appear to count in full:
+#   mentioned (listed anywhere), applied (used in a described role or project), proven
+#   (applied with ownership, scale or results). match: exact, or equivalent (comparable
+#   alternatives count).
 # - weights: share of the total score per dimension. traits is 0 by default, so traits are
 #   assessed and shown but do not change the ranking; raise it to let them count.
 """

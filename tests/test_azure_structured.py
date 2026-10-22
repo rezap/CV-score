@@ -21,11 +21,12 @@ DRAFT = {
     "domain": None,
     "summary": "Builds pipelines.",
     "responsibilities": ["Build pipelines"],
-    "must_have": [{"description": "Python"}],
+    "must_have": [{"description": "Python", "evidence": "applied", "match": "equivalent"}],
     "nice_to_have": [],
     "key_skills": ["Python"],
     "traits": [],
     "screening": [],
+    "target_years": None,
 }
 
 

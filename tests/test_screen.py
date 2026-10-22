@@ -12,6 +12,7 @@ from cvscore.models import (
     BlockKind,
     CandidateDocuments,
     DocType,
+    EvidenceLevel,
     JobProfile,
     ScreeningCriterion,
     SourceDocument,
@@ -193,3 +194,35 @@ def test_cached_embedder(tmp_path: Path) -> None:
     assert embed(["ab", "abc"]) == [[2.0, 1.0], [3.0, 1.0]]
     assert embed(["abc", "abcd"]) == [[3.0, 1.0], [4.0, 1.0]]
     assert calls == [["ab", "abc"], ["abcd"]]  # only new texts are sent
+
+
+def test_terms_only_in_a_skills_list_count_half_when_use_is_required() -> None:
+    """The same words, used in work or only listed: under the default "applied" the
+    listed CV scores lower; with "mentioned" both score the same."""
+    worked = candidate("worked", "Built forecasting models in Python with pandas.")
+    listed = candidate("listed", "Python, pandas, SQL", section="Technical skills")
+    listed.documents[0].blocks.pop()  # same two terms as the worked CV
+    listed.documents[0].blocks.append(
+        TextBlock(kind=BlockKind.LIST_ITEM, text="Python, pandas", section="Technical skills")
+    )
+    job = JOB.model_copy(update={"screening": JOB.screening[:1]})
+    w = screen_candidate(job, worked, [], CONFIG)
+    li = screen_candidate(job, listed, [], CONFIG)
+    assert w.criteria[0].listed_only == [] and w.criteria[0].score == keyword_score(2)
+    assert li.criteria[0].listed_only == ["Python", "pandas"]
+    assert li.criteria[0].score == keyword_score(1)  # 2 terms at half credit
+    assert not li.screened_out  # a listed term still passes the required gate
+
+    mentioned = job.model_copy(update={"evidence_default": EvidenceLevel.MENTIONED})
+    assert screen_candidate(mentioned, listed, [], CONFIG).criteria[0].score == w.criteria[0].score
+
+
+def test_unstructured_documents_are_not_downgraded() -> None:
+    """Without any section headings there is no telling a skills list from work, so the
+    terms count in full."""
+    plain = candidate("plain", "Python, pandas")
+    for b in plain.documents[0].blocks:
+        b.section = None
+    job = JOB.model_copy(update={"screening": JOB.screening[:1]})
+    result = screen_candidate(job, plain, [], CONFIG)
+    assert result.criteria[0].listed_only == [] and result.criteria[0].score == keyword_score(2)

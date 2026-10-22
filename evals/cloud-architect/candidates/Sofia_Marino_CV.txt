@@ -1,0 +1,13 @@
+Sofia Marino
+Frontend Developer
+
+Experience
+Frontend Developer, Blue Yonder Airlines, 2022 - present
+- Build booking pages in React and TypeScript.
+- Improved accessibility scores across the site.
+
+Skills
+React, TypeScript, CSS, Figma, Git
+
+Education
+BSc Web Development, 2022

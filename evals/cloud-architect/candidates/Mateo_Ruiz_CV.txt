@@ -1,0 +1,22 @@
+Mateo Ruiz
+Senior Azure Solution Architect
+
+Experience
+Senior Solution Architect, Litware Energy, 2018 - present
+- Designed the Azure landing zones and hub-spoke networking for 14 business units.
+- Defined the Bicep and ARM template standards; all infrastructure is deployed from code through Azure DevOps pipelines.
+- Led the move of the trading platform to AKS, raising release frequency from monthly to daily.
+- Worked with the security office on ISO 27001 controls for the cloud estate.
+
+Cloud Engineer, Adventure Works, 2014 - 2018
+- Built CI/CD pipelines and Docker images for 40 microservices.
+- Wrote automation scripts in Python and PowerShell.
+
+Certifications
+Microsoft Certified: Azure Solutions Architect Expert
+
+Skills
+Azure, Bicep, ARM templates, AKS, Kubernetes, CI/CD, Python
+
+Education
+BSc Software Engineering, 2014

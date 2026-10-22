@@ -1,0 +1,61 @@
+# Evaluation job profile (fictional). See ../README.md.
+id: senior-cloud-architect
+title: Senior Cloud Solution Architect
+seniority: senior
+domain: cloud infrastructure
+summary: Design and govern the cloud platform our product teams build on.
+responsibilities:
+- Design cloud architectures for product teams
+- Own infrastructure as code standards and reusable modules
+- Lead migrations from on-premises to the cloud
+- Set security and compliance guardrails
+must_have:
+- id: M1
+  description: Designing cloud architectures on AWS, Azure or GCP
+- id: M2
+  description: Infrastructure as code (Terraform or similar)
+- id: M3
+  description: Several years in senior engineering or architecture roles
+  evidence: proven
+nice_to_have:
+- id: N1
+  description: Kubernetes in production
+  weight: 1.0
+- id: N2
+  description: Security and compliance work (e.g. ISO 27001)
+  weight: 1.0
+- id: N3
+  description: Cloud certification (e.g. AWS Solutions Architect)
+  weight: 0.5
+  evidence: mentioned
+  match: exact
+key_skills:
+- Terraform
+- AWS
+- Kubernetes
+- CI/CD
+- Python
+traits: []
+weights:
+  experience: 0.3
+  requirements: 0.3
+  skills: 0.25
+  achievements: 0.15
+  traits: 0.0
+screening:
+- id: S1
+  name: Cloud platforms
+  terms: [AWS, Azure, GCP, Google Cloud, cloud]
+  required: true
+  weight: 2.0
+- id: S2
+  name: Infrastructure as code
+  terms: [Terraform, Pulumi, CloudFormation, Bicep, ARM templates, infrastructure as code]
+  weight: 2.0
+- id: S3
+  name: Containers
+  terms: [Kubernetes, EKS, AKS, GKE, Docker]
+  weight: 1.0
+evidence_default: applied
+match_default: equivalent
+target_years: 8

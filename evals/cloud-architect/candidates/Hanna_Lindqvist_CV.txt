@@ -1,0 +1,25 @@
+Hanna Lindqvist
+Principal Cloud Architect
+
+Experience
+Principal Cloud Architect, Northwind Logistics, 2019 - present
+- Designed the AWS landing zone and account structure used by 30 product teams.
+- Built and own the Terraform module library that provisions every production environment.
+- Led the migration of 120 on-premises services to AWS EKS with no customer-facing downtime.
+- Set the security guardrails that took the platform through ISO 27001 certification.
+
+Senior Platform Engineer, Fabrikam Retail, 2015 - 2019
+- Ran the Kubernetes platform for the web shop and wrote its CI/CD pipelines in GitLab.
+- Automated cost reports in Python, cutting the cloud bill by 22%.
+
+Software Engineer, Contoso Bank, 2012 - 2015
+- Developed payment services in Java and Python.
+
+Certifications
+AWS Certified Solutions Architect - Professional
+
+Skills
+Terraform, AWS, Kubernetes, CI/CD, Python, Java
+
+Education
+MSc Computer Science, 2012

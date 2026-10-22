@@ -82,3 +82,6 @@ ranking:
   knockout: flag          # flag | exclude: what happens when a must-have is clearly not met
   low_confidence: 0.5     # flag scores whose confidence is below this
   max_dropped_quotes: 3   # flag candidates with this many unverifiable model quotes
+  repeat_top: 10          # score the best N twice (lists in another order) and average
+  tie_margin: 0.04        # totals closer than this (or their spreads) share a tier
+  pairwise_top: 10        # judge model compares same-tier neighbours among the best N

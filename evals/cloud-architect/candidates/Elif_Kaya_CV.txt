@@ -1,0 +1,17 @@
+Elif Kaya
+DevOps Engineer
+
+Experience
+DevOps Engineer, Proseware, 2019 - present
+- Maintain Terraform modules for the company's AWS and GCP accounts.
+- Operate four production Kubernetes clusters and their monitoring.
+- Moved all builds to GitHub Actions, cutting build times from 25 to 8 minutes.
+
+Junior Systems Administrator, Proseware, 2018 - 2019
+- Managed Linux servers and backups.
+
+Skills
+Terraform, Kubernetes, AWS, GCP, CI/CD, Python, Bash
+
+Education
+BSc Information Technology, 2018

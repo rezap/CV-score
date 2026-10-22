@@ -1,0 +1,13 @@
+Ahmed Farouk
+Data Analyst
+
+Experience
+Data Analyst, Margie's Travel, 2019 - present
+- Build monthly sales dashboards in Power BI and Excel.
+- Analyse booking trends for the commercial team.
+
+Skills
+Excel, Power BI, SQL, statistics
+
+Education
+BSc Economics, 2019

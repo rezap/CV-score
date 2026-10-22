@@ -1,5 +1,15 @@
 import { useState } from "react";
-import { api, Dimension, JobProfile, Requirement, ScreeningCriterion } from "./api";
+import {
+  api,
+  Dimension,
+  EVIDENCE_LEVELS,
+  EvidenceLevel,
+  JobProfile,
+  MATCH_MODES,
+  MatchMode,
+  Requirement,
+  ScreeningCriterion,
+} from "./api";
 
 const DIMENSIONS: { key: Dimension; label: string }[] = [
   { key: "experience", label: "Experience" },
@@ -86,9 +96,13 @@ export function JobEditor({ job, onChange }: { job: JobProfile; onChange: (j: Jo
         <textarea rows={2} value={job.summary} onChange={(e) => set({ summary: e.target.value })} />
       </label>
 
+      <EvidenceDefaults job={job} onChange={set} />
+
       <RequirementBoard
         must={job.must_have}
         nice={job.nice_to_have}
+        evidenceDefault={job.evidence_default ?? "applied"}
+        matchDefault={job.match_default ?? "equivalent"}
         onChange={(must_have, nice_to_have) => set({ must_have, nice_to_have })}
       />
 
@@ -134,6 +148,7 @@ export function JobEditor({ job, onChange }: { job: JobProfile; onChange: (j: Jo
       <ScreeningEditor
         key={`screening-${job.id}`}
         criteria={job.screening ?? []}
+        evidenceDefault={job.evidence_default ?? "applied"}
         onChange={(screening) => set({ screening })}
       />
 
@@ -164,6 +179,75 @@ export function JobEditor({ job, onChange }: { job: JobProfile; onChange: (j: Jo
   );
 }
 
+const levelLabel = (v: EvidenceLevel) => EVIDENCE_LEVELS.find((l) => l.value === v)!.label;
+const matchLabel = (v: MatchMode) => MATCH_MODES.find((m) => m.value === v)!.label;
+
+/** How requirements, key skills and screening terms must appear to count in full, for
+ * the whole job (each requirement can override it), and the years the role calls for. */
+function EvidenceDefaults({
+  job,
+  onChange,
+}: {
+  job: JobProfile;
+  onChange: (patch: Partial<JobProfile>) => void;
+}) {
+  const level = job.evidence_default ?? "applied";
+  const match = job.match_default ?? "equivalent";
+  return (
+    <fieldset className="evidence-defaults">
+      <legend>How evidence counts</legend>
+      <div className="segmented" role="radiogroup" aria-label="Evidence needed">
+        {EVIDENCE_LEVELS.map((l) => (
+          <button
+            key={l.value}
+            role="radio"
+            aria-checked={level === l.value}
+            className={level === l.value ? "on" : ""}
+            title={l.hint}
+            onClick={() => onChange({ evidence_default: l.value })}
+          >
+            {l.label}
+          </button>
+        ))}
+      </div>
+      <p className="muted small">
+        {EVIDENCE_LEVELS.find((l) => l.value === level)!.hint}. Below this level a requirement
+        or key skill earns part of its credit (listed when use in work is asked for: half).
+        Each requirement can set its own level.
+      </p>
+      <div className="row">
+        <label className="inline small">
+          Alternatives{" "}
+          <select
+            value={match}
+            onChange={(e) => onChange({ match_default: e.target.value as MatchMode })}
+          >
+            {MATCH_MODES.map((m) => (
+              <option key={m.value} value={m.value} title={m.hint}>
+                {m.value === "equivalent" ? "count (Pulumi for Terraform)" : "do not count"}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="inline small">
+          Relevant years asked for{" "}
+          <input
+            type="number"
+            className="num"
+            min={0}
+            step={1}
+            value={job.target_years ?? ""}
+            placeholder="by seniority"
+            onChange={(e) =>
+              onChange({ target_years: e.target.value === "" ? null : Number(e.target.value) })
+            }
+          />
+        </label>
+      </div>
+    </fieldset>
+  );
+}
+
 type ListKey = "must" | "nice";
 
 const LISTS: { key: ListKey; title: string; hint: string; prefix: string }[] = [
@@ -186,6 +270,8 @@ const LISTS: { key: ListKey; title: string; hint: string; prefix: string }[] = [
 function RequirementBoard(props: {
   must: Requirement[];
   nice: Requirement[];
+  evidenceDefault: EvidenceLevel;
+  matchDefault: MatchMode;
   onChange: (must: Requirement[], nice: Requirement[]) => void;
 }) {
   const [drag, setDrag] = useState<{ list: ListKey; index: number } | null>(null);
@@ -324,6 +410,40 @@ function RequirementBoard(props: {
                 >
                   ×
                 </button>
+                <div className="req-opts">
+                  <select
+                    aria-label="Evidence needed"
+                    title="How it must show in the CV to count in full"
+                    className={r.evidence ? "set" : ""}
+                    value={r.evidence ?? ""}
+                    onChange={(e) =>
+                      update(l.key, i, { evidence: (e.target.value || null) as EvidenceLevel | null })
+                    }
+                  >
+                    <option value="">{levelLabel(props.evidenceDefault)} (default)</option>
+                    {EVIDENCE_LEVELS.map((lv) => (
+                      <option key={lv.value} value={lv.value} title={lv.hint}>
+                        {lv.label}
+                      </option>
+                    ))}
+                  </select>
+                  <select
+                    aria-label="Alternatives"
+                    title="Whether comparable alternatives count"
+                    className={r.match ? "set" : ""}
+                    value={r.match ?? ""}
+                    onChange={(e) =>
+                      update(l.key, i, { match: (e.target.value || null) as MatchMode | null })
+                    }
+                  >
+                    <option value="">{matchLabel(props.matchDefault)} (default)</option>
+                    {MATCH_MODES.map((m) => (
+                      <option key={m.value} value={m.value} title={m.hint}>
+                        {m.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             ))}
             {drag && over?.list === l.key && over.index === items.length && (
@@ -385,9 +505,11 @@ function SkillsInput({ skills, onChange }: { skills: string[]; onChange: (s: str
 /** The fast screen's criteria: terms searched in the CVs, without a model reading them. */
 function ScreeningEditor({
   criteria,
+  evidenceDefault,
   onChange,
 }: {
   criteria: ScreeningCriterion[];
+  evidenceDefault: EvidenceLevel;
   onChange: (c: ScreeningCriterion[]) => void;
 }) {
   // Terms are edited as text so commas can be typed; parsed on every change.
@@ -410,8 +532,10 @@ function ScreeningEditor({
       </summary>
       <p className="muted small">
         Searched in the CVs for a fast, cheap first ranking: any of the terms counts (whole
-        words, any case; one- and two-letter terms such as R match exactly). A required
-        criterion with no match screens the CV out. Empty list: the key skills are used.
+        words, any case; one- and two-letter terms such as R match exactly). Unless a
+        criterion is set to "Listed", a term found only in a skills list or summary counts
+        half. A required criterion with no match screens the CV out. Empty list: the key
+        skills are used.
       </p>
       {criteria.map((c, i) => (
         <div className="criterion" key={c.id}>
@@ -431,6 +555,22 @@ function ScreeningEditor({
               />{" "}
               required
             </label>
+            <select
+              aria-label="Evidence needed"
+              title="Under 'Used in work' or 'Proven', terms found only in a skills list count half"
+              className={c.evidence ? "set" : ""}
+              value={c.evidence ?? ""}
+              onChange={(e) =>
+                update(i, { evidence: (e.target.value || null) as EvidenceLevel | null })
+              }
+            >
+              <option value="">{levelLabel(evidenceDefault)} (default)</option>
+              {EVIDENCE_LEVELS.map((lv) => (
+                <option key={lv.value} value={lv.value}>
+                  {lv.label}
+                </option>
+              ))}
+            </select>
             <input
               type="number"
               className="num"

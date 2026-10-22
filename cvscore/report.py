@@ -45,8 +45,10 @@ def write_csv(cards: list[ScoreCard], path: Path, names: dict[str, str] | None) 
         w.writerow(
             [
                 "rank",
+                "tier",
                 "candidate",
                 "total",
+                "spread",
                 *[d.value for d in DIMENSIONS],
                 "years_experience",
                 "skill_coverage",
@@ -62,8 +64,10 @@ def write_csv(cards: list[ScoreCard], path: Path, names: dict[str, str] | None) 
             w.writerow(
                 [
                     c.rank,
+                    c.tier or "",
                     _label(c, names),
                     _pct(c.total),
+                    _pct(c.spread),
                     *dims,
                     c.features.get("years_experience") or "",
                     _pct(c.features.get("skill_coverage")),
@@ -158,7 +162,7 @@ blockquote{
 }
 .pass{color:var(--good)}
 .fail{color:var(--bad)}
-.unclear{color:var(--warn)}
+.unclear,.partial{color:var(--warn)}
 .note{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 12px}
 """
 
@@ -182,24 +186,47 @@ def _candidate_section(card: ScoreCard, label: str) -> str:
     if card.notes:
         parts.append("<ul>" + "".join(f"<li>{_e(n)}</li>" for n in card.notes) + "</ul>")
     feats = card.features
+    spread = f" · Spread between readings: {_pct(card.spread)}" if card.spread is not None else ""
+    tier = f" · Tier {card.tier}" if card.tier else ""
     parts.append(
         f"<p class=muted>Years of experience: {_e(feats.get('years_experience') or 'unknown')}"
-        f" · Key-skill coverage: {_pct(feats.get('skill_coverage')) or 'n/a'}%</p>"
+        f" (relevant: {_e(feats.get('relevant_years') or 'n/a')}"
+        f" of {_e(feats.get('target_years') or 'n/a')} asked for){tier}{spread}</p>"
     )
     if card.requirement_checks:
         parts.append(
             "<h3>Requirements</h3><div class=wrap><table><tr><th>Requirement</th>"
-            "<th>Result</th><th>Why</th></tr>"
+            "<th>Result</th><th>Shown / asked</th><th>Why</th></tr>"
         )
         for rc in card.requirement_checks:
             kind = "must" if rc.must_have else "nice"
-            css = {RequirementStatus.PASS: "pass", RequirementStatus.FAIL: "fail"}.get(
-                rc.status, "unclear"
+            css = {
+                RequirementStatus.PASS: "pass",
+                RequirementStatus.FAIL: "fail",
+                RequirementStatus.PARTIAL: "partial",
+            }.get(rc.status, "unclear")
+            levels = (
+                f"{_e(rc.observed_level or 'none')} / {_e(rc.required_level.value)}"
+                if rc.required_level
+                else ""
             )
             parts.append(
                 f"<tr><td>{_e(rc.requirement_id)} ({kind}): {_e(rc.description)}</td>"
-                f"<td class={css}>{_e(rc.status)}</td><td>{_e(rc.rationale)}"
+                f"<td class={css}>{_e(rc.status)}</td><td>{levels}</td><td>{_e(rc.rationale)}"
                 f"{_quotes(rc.evidence)}</td></tr>"
+            )
+        parts.append("</table></div>")
+    if card.skill_checks:
+        parts.append(
+            "<h3>Key skills</h3><div class=wrap><table><tr><th>Skill</th><th>Shown / asked</th>"
+            "<th>Word found in</th><th>Evidence</th></tr>"
+        )
+        for sc in card.skill_checks:
+            css = "pass" if sc.value >= 1 else ("partial" if sc.value > 0 else "unclear")
+            parts.append(
+                f"<tr><td>{_e(sc.skill)}</td><td class={css}>{_e(sc.observed_level)} / "
+                f"{_e(sc.required_level.value)}</td><td>{_e(', '.join(sc.found_in) or '-')}</td>"
+                f"<td>{_quotes(sc.evidence)}</td></tr>"
             )
         parts.append("</table></div>")
     for s in card.scores:
@@ -230,9 +257,11 @@ def write_html(
             f"<td class=num>{_pct(s.score) if (s := c.score(d)) else ''}</td>" for d in DIMENSIONS
         )
         flags = "".join(f"<span class=flag>{_e(f)}</span>" for f in c.flags)
+        spread = f" <span class=muted>±{_pct(c.spread / 2)}</span>" if c.spread else ""
         rows.append(
-            f"<tr><td class=num>{c.rank}</td><td class=id>{_e(_label(c, names))}</td>"
-            f"<td class=num><b>{_pct(c.total)}</b></td>{cells}<td>{flags}</td></tr>"
+            f"<tr><td class=num>{c.rank}</td><td class=num>{c.tier or ''}</td>"
+            f"<td class=id>{_e(_label(c, names))}</td>"
+            f"<td class=num><b>{_pct(c.total)}</b>{spread}</td>{cells}<td>{flags}</td></tr>"
         )
     head = "".join(f"<th class=num>{d.value.title()}</th>" for d in DIMENSIONS)
     body = f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
@@ -244,7 +273,11 @@ unless given a weight in the job profile.</p>
 <p class=note>Decision support only. Scores come from a language model applying a rubric to
 redacted documents; every judgement cites quotes that were checked against the documents.
 Read the evidence, and treat flagged candidates with care, before deciding.</p>
-<h2>Ranking</h2><div class=wrap><table><tr><th class=num>#</th><th>Candidate</th>
+<p class=muted>Candidates in the same tier are too close to tell apart from their scores
+(within ranking.tie_margin, or within the spread between two readings); neighbours
+in a tier may have been reordered by a head-to-head comparison (see their notes).</p>
+<h2>Ranking</h2><div class=wrap><table><tr><th class=num>#</th><th class=num>Tier</th>
+<th>Candidate</th>
 <th class=num>Total</th>{head}
 <th>Flags</th></tr>{"".join(rows)}</table></div>
 <h2>Details</h2>{"".join(_candidate_section(c, _label(c, names)) for c in cards)}

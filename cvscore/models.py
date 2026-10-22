@@ -32,10 +32,35 @@ class Evidence(BaseModel):
 # --- Job ---------------------------------------------------------------------
 
 
+class EvidenceLevel(StrEnum):
+    """How a requirement or skill must appear in the documents to count in full."""
+
+    MENTIONED = "mentioned"  # listed anywhere (a skills section is enough)
+    APPLIED = "applied"  # used in a described role, project or study
+    PROVEN = "proven"  # applied with ownership, scale or results
+
+
+class MatchMode(StrEnum):
+    EXACT = "exact"  # only what is named counts (Terraform)
+    EQUIVALENT = "equivalent"  # comparable alternatives count too (Pulumi, Bicep, ...)
+
+
+LEVEL_RANK: dict[str, int] = {"none": 0, "mentioned": 1, "applied": 2, "proven": 3}
+
+
+def level_value(observed: str, required: EvidenceLevel) -> float:
+    """0..1 credit for evidence at ``observed`` level when ``required`` is asked for:
+    full at or above it, a share below it (listed when use is required: 0.5)."""
+    return min(1.0, LEVEL_RANK.get(observed, 0) / LEVEL_RANK[required.value])
+
+
 class Requirement(BaseModel):
     id: str
     description: str
     weight: float = Field(default=1.0, ge=0)
+    # None: the job's evidence_default / match_default.
+    evidence: EvidenceLevel | None = None
+    match: MatchMode | None = None
 
 
 class Trait(BaseModel):
@@ -60,6 +85,9 @@ class ScreeningCriterion(BaseModel):
         description="A qualified CV must mention it; without any match the CV is screened out.",
     )
     weight: float = Field(default=1.0, ge=0)
+    # None: the job's evidence_default. Under "applied" or "proven", terms found only in a
+    # skills list or summary count half.
+    evidence: EvidenceLevel | None = None
 
 
 class Dimension(StrEnum):
@@ -71,10 +99,10 @@ class Dimension(StrEnum):
 
 
 DEFAULT_WEIGHTS: dict[Dimension, float] = {
-    Dimension.EXPERIENCE: 0.35,
-    Dimension.ACHIEVEMENTS: 0.25,
+    Dimension.EXPERIENCE: 0.30,
+    Dimension.REQUIREMENTS: 0.30,  # must-haves and nice-to-haves
     Dimension.SKILLS: 0.25,
-    Dimension.REQUIREMENTS: 0.15,
+    Dimension.ACHIEVEMENTS: 0.15,  # kept low: it rewards CVs that state numbers
     Dimension.TRAITS: 0.0,
 }
 
@@ -92,6 +120,18 @@ class JobProfile(BaseModel):
     traits: list[Trait] = Field(default_factory=list)
     weights: dict[Dimension, float] = Field(default_factory=lambda: dict(DEFAULT_WEIGHTS))
     screening: list[ScreeningCriterion] = Field(default_factory=list)
+    # How requirements, key skills and screening terms must appear, unless an item says
+    # otherwise, and whether comparable alternatives count.
+    evidence_default: EvidenceLevel = EvidenceLevel.APPLIED
+    match_default: MatchMode = MatchMode.EQUIVALENT
+    # Years of relevant experience the role calls for (from the ad, or by seniority).
+    target_years: float | None = Field(default=None, ge=0)
+
+    def evidence_for(self, item: Requirement | ScreeningCriterion) -> EvidenceLevel:
+        return item.evidence or self.evidence_default
+
+    def match_for(self, item: Requirement) -> MatchMode:
+        return item.match or self.match_default
 
 
 # --- Candidate ---------------------------------------------------------------
@@ -188,6 +228,7 @@ class CandidateProfile(BaseModel):
 
 class RequirementStatus(StrEnum):
     PASS = "pass"
+    PARTIAL = "partial"  # shown, but below the evidence level asked for
     FAIL = "fail"
     UNCLEAR = "unclear"
 
@@ -198,6 +239,24 @@ class RequirementCheck(BaseModel):
     must_have: bool = True
     status: RequirementStatus
     rationale: str
+    evidence: list[Evidence] = Field(default_factory=list)
+    required_level: EvidenceLevel | None = None
+    observed_level: str | None = Field(
+        default=None, description="none / mentioned / applied / proven, as verified."
+    )
+    value: float | None = Field(default=None, description="0-1 credit towards the score.")
+
+
+class SkillCheck(BaseModel):
+    """How one key skill shows in the documents."""
+
+    skill: str
+    required_level: EvidenceLevel
+    observed_level: str = "none"
+    value: float = 0.0
+    found_in: list[str] = Field(
+        default_factory=list, description="Where the word appears: 'work', 'skills list'."
+    )
     evidence: list[Evidence] = Field(default_factory=list)
 
 
@@ -230,6 +289,7 @@ class ScoreCard(BaseModel):
     candidate_id: str
     job_id: str
     requirement_checks: list[RequirementCheck] = Field(default_factory=list)
+    skill_checks: list[SkillCheck] = Field(default_factory=list)
     scores: list[DimensionScore] = Field(default_factory=list)
     trait_scores: list[TraitScore] = Field(default_factory=list)
     features: dict[str, float | None] = Field(
@@ -237,6 +297,10 @@ class ScoreCard(BaseModel):
     )
     total: float | None = None
     rank: int | None = None
+    # Totals from repeated scoring differ by this much (None: scored once).
+    spread: float | None = None
+    # Candidates whose totals are too close to tell apart share a tier (1 = best).
+    tier: int | None = None
     flags: list[Flag] = Field(default_factory=list)
     notes: list[str] = Field(default_factory=list, description="Why flags were raised, etc.")
     trace_id: str | None = None

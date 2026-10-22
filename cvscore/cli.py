@@ -474,5 +474,34 @@ def screen_cmd(
     )
 
 
+@app.command("eval")
+def eval_cmd(
+    set_dir: Annotated[
+        Path,
+        typer.Argument(
+            help="Evaluation set: job.yaml, candidates/, expected.yaml (see evals/README.md).",
+            exists=True,
+            file_okay=False,
+        ),
+    ],
+    repeats: Annotated[
+        int, typer.Option(help="Runs to compare; each makes fresh model calls.", min=1)
+    ] = 3,
+    out: Annotated[Path | None, typer.Option("--out", "-o", help="Write eval.json here.")] = None,
+    config: ConfigOption = None,
+) -> None:
+    """Check the ranking against known answers on fictional candidates: tier order,
+    controlled pairs, and how much totals move between runs. Costs real model calls."""
+    from cvscore.evaluate import run_eval
+
+    settings = _load(config)
+    report = run_eval(set_dir, settings, lambda s: llm_provider(s, None), repeats=repeats)
+    typer.echo(report.summary())
+    if out is not None:
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "eval.json").write_text(report.model_dump_json(indent=2), encoding="utf-8")
+        typer.echo(f"\nWrote {out / 'eval.json'}.")
+
+
 if __name__ == "__main__":
     app()

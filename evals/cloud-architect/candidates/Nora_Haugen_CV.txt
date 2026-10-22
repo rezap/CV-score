@@ -1,0 +1,13 @@
+Nora Haugen
+Project Manager
+
+Experience
+Project Manager, Graphic Design Institute, 2016 - present
+- Plan and coordinate marketing projects with budgets up to 2 million.
+- Run weekly status meetings with stakeholders and suppliers.
+
+Skills
+Terraform, AWS, Kubernetes, Cloud architecture, CI/CD, Python, Scrum, MS Project
+
+Education
+MA Communication, 2016

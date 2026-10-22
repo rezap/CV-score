@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from statistics import mean
+
 from cvscore.config import RankingConfig
-from cvscore.models import Dimension, Flag, JobProfile, RequirementStatus, ScoreCard
+from cvscore.models import Dimension, DimensionScore, Flag, JobProfile, RequirementStatus, ScoreCard
 
 
 def total_score(card: ScoreCard, weights: dict[Dimension, float]) -> float | None:
@@ -61,4 +63,61 @@ def rank(cards: list[ScoreCard], job: JobProfile, config: RankingConfig) -> list
     ordered = sorted(cards, key=key)
     for i, card in enumerate(ordered, 1):
         card.rank = i
+    assign_tiers(ordered, config.tie_margin)
     return ordered
+
+
+def assign_tiers(ordered: list[ScoreCard], margin: float) -> None:
+    """Number tiers down the ranking: a candidate joins the tier above when the gap to
+    the previous one is within ``margin`` or within their spreads. Knocked-out and
+    unscored candidates get no tier."""
+    tier = 0
+    previous: ScoreCard | None = None
+    for card in ordered:
+        if card.total is None or Flag.KNOCKOUT_FAILED in card.flags:
+            card.tier = None
+            continue
+        if previous is None or previous.total is None:
+            tier += 1
+        else:
+            allowed = max(margin, ((previous.spread or 0) + (card.spread or 0)) / 2)
+            if previous.total - card.total > allowed + 1e-9:
+                tier += 1
+        card.tier = tier
+        previous = card
+
+
+def combine_passes(passes: list[ScoreCard], job: JobProfile) -> ScoreCard:
+    """One card from repeated readings: dimension scores averaged, the spread of their
+    totals recorded, and a must-have the readings disagree on failing made "unclear"."""
+    first = passes[0].model_copy(deep=True)
+    if len(passes) == 1:
+        return first
+    totals = [t for p in passes if (t := total_score(p, job.weights)) is not None]
+    by_dim: dict[Dimension, list[DimensionScore]] = {}
+    for p in passes:
+        for s in p.scores:
+            by_dim.setdefault(s.dimension, []).append(s)
+    for s in first.scores:
+        values = [x.score for x in by_dim.get(s.dimension, []) if x.score is not None]
+        if values:
+            s.score = round(mean(values), 3)
+        s.confidence = round(mean(x.confidence for x in by_dim.get(s.dimension, [s])), 2)
+    for check in first.requirement_checks:
+        statuses = {
+            c.status
+            for p in passes
+            for c in p.requirement_checks
+            if c.requirement_id == check.requirement_id
+        }
+        if check.must_have and RequirementStatus.FAIL in statuses and len(statuses) > 1:
+            check.status = RequirementStatus.UNCLEAR
+            check.rationale += " [The readings disagreed on whether this is met.]"
+    if len(totals) > 1:
+        first.spread = round(max(totals) - min(totals), 3)
+        first.notes.append(
+            f"Scored {len(passes)} times: totals "
+            + ", ".join(f"{round(t * 100)}" for t in totals)
+            + "."
+        )
+    return first

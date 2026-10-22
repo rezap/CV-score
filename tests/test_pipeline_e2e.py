@@ -16,6 +16,7 @@ from cvscore.config import Settings
 from cvscore.extract import CandidateProfileDraft
 from cvscore.ingest.ocr import PageTranscript
 from cvscore.job import JobProfileDraft
+from cvscore.judge import PairwiseDraft
 from cvscore.llm.structured import CachedLLM, LLMProvider
 from cvscore.score import ScoringDraft
 from tests.fakes import FakeLLM, documents, lines
@@ -37,8 +38,22 @@ def job_handler(_: Sequence[BaseMessage]) -> dict[str, Any]:
         "domain": "data",
         "summary": "Build and run the streaming data platform.",
         "responsibilities": ["Build the streaming platform", "Mentor engineers"],
-        "must_have": [{"description": "5+ years of data engineering experience"}],
-        "nice_to_have": [{"description": "Apache Spark", "importance": "medium"}],
+        "must_have": [
+            {
+                "description": "5+ years of data engineering experience",
+                "evidence": "applied",
+                "match": "equivalent",
+            }
+        ],
+        "nice_to_have": [
+            {
+                "description": "Apache Spark",
+                "importance": "medium",
+                "evidence": "applied",
+                "match": "exact",
+            }
+        ],
+        "target_years": 5,
         "key_skills": ["Python", "SQL", "Apache Spark", "Kafka"],
         "traits": [
             {"name": "Knowledge sharing", "definition": "Teaches others.", "evidence_examples": []}
@@ -101,19 +116,35 @@ def scoring_handler(messages: Sequence[BaseMessage]) -> dict[str, Any]:
     cv_text = documents(messages)["cv"]
     quote = {"doc": "cv", "quote": next(line for line in lines(cv_text) if "%" in line)}
     data_engineer = "Data Engineer" in cv_text
-    dim = {"confidence": "high", "rationale": "From the CV.", "quotes": [quote]}
+    level = "applied" if data_engineer else "none"
     return {
         "requirements": [
             {
                 "requirement_id": "M1",
-                "status": "pass" if data_engineer else "fail",
+                "level": level,
+                "contradicted": not data_engineer,
                 "rationale": "Role history.",
                 "quotes": [quote],
             }
         ],
-        "experience": {**dim, "score": 5 if data_engineer else 2},
-        "achievements": {**dim, "score": 4},
-        "skills": {**dim, "score": 4 if data_engineer else 2},
+        "skills": [
+            {"skill": s, "level": level, "quotes": [quote]}
+            for s in ["Python", "SQL", "Apache Spark", "Kafka"]
+        ],
+        "experience": {
+            "relevant_roles": [0] if data_engineer else [],
+            "relevance": 5 if data_engineer else 2,
+            "seniority": 4 if data_engineer else 2,
+            "confidence": "high",
+            "rationale": "From the CV.",
+            "quotes": [quote],
+        },
+        "achievements": {
+            "score": 4,
+            "confidence": "high",
+            "rationale": "From the CV.",
+            "quotes": [quote],
+        },
         "traits": [{"trait_id": "T1", "score": None, "rationale": "No evidence.", "quotes": []}],
     }
 
@@ -185,7 +216,11 @@ def test_draft_then_run(fake: FakeLLM, setup: tuple[Path, Path], tmp_path: Path)
     # The scanned CV was never sent to the model; the other two were, once per step.
     schemas = [schema for _, schema, _ in fake.calls]
     assert schemas.count(CandidateProfileDraft) == 2
-    assert schemas.count(ScoringDraft) == 2
+    # Two readable candidates scored once each, plus a second reading of the one not
+    # knocked out (ranking.repeat_top); no same-tier neighbours, so no judge calls.
+    assert schemas.count(ScoringDraft) == 3
+    assert PairwiseDraft not in schemas
+    assert "Scored 2 times" in jane["notes"]
 
     # Nothing identifying reached the model.
     prompts = fake.prompts()
@@ -252,7 +287,7 @@ def test_run_with_shortlist_assesses_only_the_best(
     )  # fmt: skip
     assert "Assessing the best 1 of 3 candidates" in output
     schemas = [schema for _, schema, _ in fake.calls]
-    assert schemas.count(CandidateProfileDraft) == 1 and schemas.count(ScoringDraft) == 1
+    assert schemas.count(CandidateProfileDraft) == 1 and schemas.count(ScoringDraft) == 2
 
     identity = json.loads((out / "identity_map.json").read_text())
     results = json.loads((out / "results.json").read_text())

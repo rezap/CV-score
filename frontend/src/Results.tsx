@@ -31,6 +31,20 @@ const FLAG_TEXT: Record<string, string> = {
 
 const pct = (v: number | null | undefined) => (v == null ? "–" : `${Math.round(v * 100)}`);
 
+const LEVEL_TEXT: Record<string, string> = {
+  none: "not shown",
+  mentioned: "listed",
+  applied: "used in work",
+  proven: "proven",
+};
+const levelText = (v: string) => LEVEL_TEXT[v] ?? v;
+
+/** The candidate shares a tier with the one ranked just above it. */
+function sameTier(rows: ScoreCard[], card: ScoreCard): boolean {
+  const i = rows.indexOf(card);
+  return i > 0 && card.tier != null && rows[i - 1].tier === card.tier;
+}
+
 /** Polls a run until it finishes, then shows the ranking. */
 export function RunView({ runId, showNames }: { runId: string; showNames: boolean }) {
   const [data, setData] = useState<RunData | null>(null);
@@ -71,7 +85,9 @@ export function RunView({ runId, showNames }: { runId: string; showNames: boolea
             ? "Reading documents..."
             : meta.mode === "screen"
               ? "Screening..."
-              : `Assessing candidates: ${meta.done} of ${meta.total}`}
+              : meta.total > 0 && meta.done >= meta.total
+                ? "Checking close calls: second readings of the best and head-to-head comparisons..."
+                : `Assessing candidates: ${meta.done} of ${meta.total}`}
         </p>
         <div className="progress">
           <div style={{ width: `${Math.max(3, share * 100)}%` }} />
@@ -358,11 +374,23 @@ function Screening(props: {
                                   )}
                                   <div className="small">
                                     {c.matched.length ? (
-                                      c.matched.map((t) => (
-                                        <span className="chip" key={t}>
-                                          {t}
-                                        </span>
-                                      ))
+                                      c.matched.map((t) => {
+                                        const listed = c.listed_only?.includes(t);
+                                        return (
+                                          <span
+                                            className={`chip ${listed ? "listed" : ""}`}
+                                            key={t}
+                                            title={
+                                              listed
+                                                ? "Only in a skills list or summary: counts half unless the criterion asks for a mention only"
+                                                : "Found in described work"
+                                            }
+                                          >
+                                            {t}
+                                            {listed ? " · listed" : ""}
+                                          </span>
+                                        );
+                                      })
                                     ) : (
                                       <span className="muted">no terms found</span>
                                     )}
@@ -479,8 +507,26 @@ function Ranking(props: {
                         <td>
                           <RegionBadge location={summaryOf(data, card.candidate_id)?.location} />
                         </td>
-                        <td>
+                        <td className="total-cell">
                           <ScorePill value={card.total} />
+                          {card.spread ? (
+                            <span
+                              className="spread small muted"
+                              title="Half the difference between two independent readings"
+                            >
+                              {" "}
+                              ±{pct(card.spread / 2)}
+                            </span>
+                          ) : null}
+                          {sameTier(rows, card) && (
+                            <span
+                              className="tie small"
+                              title="Too close to the candidate above to tell apart from the scores"
+                            >
+                              {" "}
+                              ≈
+                            </span>
+                          )}
                         </td>
                         {columns.map((c) => (
                           <td key={c.key}>
@@ -576,10 +622,32 @@ function Detail({ runId, card }: { runId: string; card: ScoreCard }) {
             <div key={r.requirement_id} className="check">
               <span className={`status ${r.status}`}>{r.status}</span>{" "}
               <strong>{r.must_have ? "Must" : "Nice"}:</strong> {r.description}
+              {r.required_level && (
+                <span className="level small muted">
+                  {" "}
+                  · shown: {levelText(r.observed_level ?? "none")}, asked: {levelText(r.required_level)}
+                </span>
+              )}
               <div className="small">{r.rationale}</div>
               <Quotes evidence={r.evidence} />
             </div>
           ))}
+        </>
+      )}
+      {(card.skill_checks ?? []).length > 0 && (
+        <>
+          <h4>Key skills</h4>
+          <div className="skill-checks">
+            {card.skill_checks!.map((sk) => (
+              <span
+                key={sk.skill}
+                className={`skill-check ${sk.value >= 1 ? "full" : sk.value > 0 ? "part" : "none"}`}
+                title={`Shown: ${levelText(sk.observed_level)}; asked: ${levelText(sk.required_level)}. Word found in: ${sk.found_in.join(", ") || "nowhere"}.`}
+              >
+                {sk.skill} <em>{levelText(sk.observed_level)}</em>
+              </span>
+            ))}
+          </div>
         </>
       )}
       {card.scores

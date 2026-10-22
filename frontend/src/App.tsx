@@ -16,13 +16,16 @@ import { Candidates } from "./Candidates";
 import { FolderPicker } from "./FolderPicker";
 import { JobEditor, JobInput } from "./JobEditor";
 import { RunView } from "./Results";
-import { ALL_REGIONS, HomeContext, Step, knownRegions, usePersistent } from "./ui";
+import { SettingsPanel } from "./Settings";
+import { ALL_REGIONS, HomeContext, Step, knownRegions, usePersistent, useTheme } from "./ui";
 
 type Mode = "screen" | "shortlist" | "all";
 
 export function App() {
   const [status, setStatus] = useState<Status | null>(null);
   const [showNames, setShowNames] = useState(false);
+  const [theme, setTheme] = useTheme();
+  const [settingsOpen, setSettingsOpen] = useState(false);
 
   // Kept in this browser, so a reload (or tomorrow) picks up where you left off.
   const [folder, setFolder] = usePersistent<string | null>("folder", null);
@@ -160,8 +163,29 @@ export function App() {
               {!status.ready && " · not ready"}
             </span>
           )}
+          <button
+            className="icon-btn theme-btn"
+            title={`Theme: ${theme} (click to change)`}
+            aria-label="Change theme"
+            onClick={() =>
+              setTheme(theme === "system" ? "light" : theme === "light" ? "dark" : "system")
+            }
+          >
+            {theme === "dark" ? "☾" : theme === "light" ? "☀" : "◐"}
+          </button>
+          <button className="settings-btn" onClick={() => setSettingsOpen(true)}>
+            ⚙ Settings
+          </button>
         </div>
       </header>
+      {settingsOpen && (
+        <SettingsPanel
+          theme={theme}
+          onTheme={setTheme}
+          onClose={() => setSettingsOpen(false)}
+          onSaved={() => api.status().then(setStatus, () => setStatus(null))}
+        />
+      )}
       <main>
         {status && !status.ready && (
           <div className="warning box">
@@ -171,8 +195,12 @@ export function App() {
                 <li key={p}>{p}</li>
               ))}
             </ul>
-            Copy <code>cvscore.example.yaml</code> to <code>cvscore.yaml</code> and set your
-            provider, then reload. You can still browse and check the folder.
+            Open{" "}
+            <button className="link" onClick={() => setSettingsOpen(true)}>
+              Settings
+            </button>{" "}
+            to choose the provider and models (or copy <code>cvscore.example.yaml</code> to{" "}
+            <code>cvscore.yaml</code>). You can still browse and check the folder.
           </div>
         )}
 

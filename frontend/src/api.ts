@@ -282,8 +282,28 @@ const json = (body: unknown): RequestInit => ({
   body: JSON.stringify(body),
 });
 
+/** The config file's settings (cvscore.yaml), as the server reads them. */
+export type SettingsData = Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+export interface SettingsInfo {
+  path: string;
+  exists: boolean;
+  problem: string | null;
+  settings: SettingsData;
+  env_overrides: string[];
+  secrets: Record<string, boolean>;
+  backup?: string | null;
+}
+
 export const api = {
   status: () => request<Status>("/api/status"),
+  settings: () => request<SettingsInfo>("/api/settings"),
+  saveSettings: (settings: SettingsData) =>
+    request<SettingsInfo>("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(settings),
+    }),
   browse: (path?: string) =>
     request<FolderListing>(`/api/fs${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   scan: (folder: string, overrides: Record<string, DocType>, exclude: string[]) =>

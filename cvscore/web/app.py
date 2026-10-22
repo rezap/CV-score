@@ -4,6 +4,8 @@ It is meant to run on your own machine (it binds to 127.0.0.1 by default): it re
 folders on disk, below the browse root you start it with.
 
     GET  /api/status                   provider, models and whether they are configured
+    GET  /api/settings                 every setting in the config file, and which are overridden
+    PUT  /api/settings                 validate and save settings to the config file
     GET  /api/fs?path=                 sub-folders and documents of a folder
     POST /api/scan                     group a folder's files into candidates (no model calls)
     POST /api/job                      job ad (PDF/DOCX/TXT/MD or pasted text) -> drafted profile;
@@ -31,7 +33,15 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ValidationError
 
-from cvscore.config import ModelRole, Provider, Settings, load_settings
+from cvscore.config import (
+    ModelRole,
+    Provider,
+    Settings,
+    config_path,
+    env_overrides,
+    load_settings,
+    save_settings,
+)
 from cvscore.ingest import ExtractionError, extract_file
 from cvscore.ingest.cache import cached_extractor
 from cvscore.ingest.discovery import (
@@ -144,6 +154,43 @@ def create_app(
         if not path.is_dir():
             raise HTTPException(404, f"Not a folder: {path}")
         return path
+
+    @app.get("/api/settings")
+    def get_settings() -> dict[str, Any]:
+        path = config_path(config)
+        try:
+            current = load_settings(config) if path.is_file() else Settings.model_validate({})
+            problem = None
+        except (ValidationError, ValueError) as e:
+            current, problem = Settings.model_validate({}), str(e)
+        return {
+            "path": str(path.resolve()),
+            "exists": path.is_file(),
+            "problem": problem,
+            "settings": current.model_dump(mode="json"),
+            # Values from these variables win over the file, so edits to them show no effect.
+            "env_overrides": env_overrides(),
+            # Secrets are never read or written here; only whether they are set.
+            "secrets": {
+                name: bool(os.environ.get(name, "").strip())
+                for name in [
+                    current.openai.api_key_env,
+                    "LANGFUSE_PUBLIC_KEY",
+                    "LANGFUSE_SECRET_KEY",
+                ]
+            },
+        }
+
+    @app.put("/api/settings")
+    def put_settings(body: dict[str, Any]) -> dict[str, Any]:
+        try:
+            new = Settings.model_validate(body)
+        except ValidationError as e:
+            raise HTTPException(422, f"Invalid settings: {e}") from e
+        backup = save_settings(new, config_path(config))
+        result = get_settings()
+        result["backup"] = str(backup) if backup else None
+        return result
 
     @app.get("/api/status")
     def status() -> dict[str, Any]:

@@ -17,6 +17,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path
 
 from cvscore.ingest.text_utils import is_section_keyword, normalize_text
@@ -156,9 +157,14 @@ def type_from_filename(path: Path) -> DocType | None:
 def filename_key(path: Path) -> str:
     """The file name without document-type words, versions and dates: what is left usually
     names the candidate (``Jane_Doe_CV_v2.pdf`` -> ``jane doe``) or an applicant number."""
+    return _stem_key(path.stem)
+
+
+@lru_cache(maxsize=8192)  # grouping a folder compares every file name with every other
+def _stem_key(stem: str) -> str:
     kept = [
         t
-        for t in file_tokens(path.stem)
+        for t in file_tokens(stem)
         if t not in TYPE_TOKENS
         and t not in _NOISE_TOKENS
         and not re.fullmatch(r"v\d+|\d{1,2}|(19|20)\d\d(\d{2,4})?", t)
@@ -577,11 +583,12 @@ def names_in(doc: SourceDocument | None, path: Path) -> list[tuple[str, str]]:
     return unique
 
 
-def name_tokens(name: str) -> list[str]:
+@lru_cache(maxsize=8192)  # grouping a folder compares every name with every other
+def name_tokens(name: str) -> tuple[str, ...]:
     plain = unicodedata.normalize("NFKD", name.lower())
     plain = "".join(ch for ch in plain if not unicodedata.combining(ch))
     plain = plain.replace("ø", "o").replace("æ", "ae").replace("ß", "ss")
-    return [t for t in re.split(r"[^a-z]+", plain) if len(t) >= 2 and t not in _PARTICLES]
+    return tuple(t for t in re.split(r"[^a-z]+", plain) if len(t) >= 2 and t not in _PARTICLES)
 
 
 def same_person(a: str, b: str) -> bool:

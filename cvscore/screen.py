@@ -24,6 +24,7 @@ Keyword screens favour CVs that use the expected words, so check the screened-ou
 from __future__ import annotations
 
 import math
+import operator
 import re
 from collections.abc import Callable, Sequence
 from datetime import date
@@ -145,11 +146,17 @@ def listed_only_terms(matched: list[str], blocks: Sequence[tuple[str, str]]) -> 
 # --- Semantic ----------------------------------------------------------------------------
 
 
-def _cosine(a: Sequence[float], b: Sequence[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b, strict=False))
-    na = math.sqrt(sum(x * x for x in a))
-    nb = math.sqrt(sum(y * y for y in b))
-    return dot / (na * nb) if na and nb else 0.0
+def _py_dot(a: Sequence[float], b: Sequence[float]) -> float:
+    return float(sum(map(operator.mul, a, b)))
+
+
+# Python 3.12+ has the same sum in C (much faster for 1,000+ dimensions).
+_dot: Callable[[Sequence[float], Sequence[float]], float] = getattr(math, "sumprod", _py_dot)
+
+
+def _unit(v: Sequence[float]) -> Sequence[float]:
+    norm = math.sqrt(_dot(v, v))
+    return [x / norm for x in v] if norm else v
 
 
 def passages(blocks: list[TextBlock], limit: int = 200) -> list[str]:
@@ -178,11 +185,13 @@ def semantic_scores(
     if not chunks:
         return [0.0 for _ in criteria]
     vectors = embed([criterion_query(c) for c in criteria] + chunks)
-    queries, passages_ = vectors[: len(criteria)], vectors[len(criteria) :]
+    # Unit vectors once, so each similarity is a plain dot product.
+    units = [_unit(v) for v in vectors]
+    queries, passages_ = units[: len(criteria)], units[len(criteria) :]
     span = max(1e-6, config.similarity_full - config.similarity_floor)
     out = []
     for q in queries:
-        best = max(_cosine(q, p) for p in passages_)
+        best = max(_dot(q, p) for p in passages_)
         out.append(round(min(1.0, max(0.0, (best - config.similarity_floor) / span)), 2))
     return out
 

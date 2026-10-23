@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from functools import lru_cache
 
 from cvscore.models import DocType, Evidence
 
@@ -22,6 +23,13 @@ def _alnum(text: str) -> str:
     return re.sub(r"[^\w]+", "", _normalize(text))
 
 
+@lru_cache(maxsize=128)
+def _document_forms(text: str) -> tuple[str, str]:
+    """A document normalised both ways, once: every quote is checked against it."""
+    normalized = _normalize(text)
+    return normalized, re.sub(r"[^\w]+", "", normalized)
+
+
 MIN_QUOTE_CHARS = 12
 
 
@@ -31,10 +39,11 @@ def quote_in(quote: str, text: str) -> bool:
     q = _normalize(quote).strip(" .\"'")
     if len(q) < MIN_QUOTE_CHARS:
         return False
-    if q in _normalize(text):
+    normalized, alnum = _document_forms(text)
+    if q in normalized:
         return True
     aq = _alnum(quote)
-    return len(aq) >= MIN_QUOTE_CHARS and aq in _alnum(text)
+    return len(aq) >= MIN_QUOTE_CHARS and aq in alnum
 
 
 def verify(quotes: list[tuple[str, str]], docs: dict[DocType, str]) -> tuple[list[Evidence], int]:

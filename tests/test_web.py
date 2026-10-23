@@ -307,3 +307,20 @@ def test_settings_round_trip(
 
     bad = client.put("/api/settings", json={**settings, "ranking": {"tie_margin": -1}})
     assert bad.status_code == 422
+
+
+def test_progress_polls_send_only_the_status(tmp_path: Path) -> None:
+    """While a run is going, the app polls every second: answer with the status alone."""
+    from cvscore.web.runs import RunManager, RunMeta
+
+    runs = RunManager(tmp_path, Settings, lambda s, c: FakeLLM({}).provider())
+    out = tmp_path / "job-1"
+    out.mkdir()
+    (out / "candidates.json").write_text('[{"id": "c1", "label": "Jane Example"}]')
+    meta = RunMeta(id="job-1", status="assessing", created="", folder="", job_title="", total=9)
+    (out / "meta.json").write_text(meta.model_dump_json())
+    polled = runs.results("job-1")
+    assert polled["meta"]["total"] == 9 and polled["candidates"] == []
+    (out / "meta.json").write_text(meta.model_copy(update={"status": "done"}).model_dump_json())
+    assert runs.results("job-1")["candidates"] == [{"id": "c1", "label": "Jane Example"}]
+    runs.shutdown()

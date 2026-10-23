@@ -72,6 +72,10 @@ class RunManager:
         self.provider = provider
         self.cache = cache
         self._lock = threading.Lock()
+        # Reading a folder parses every new file (seconds of CPU each for long PDFs).
+        # Scans and runs take turns, so a second one finds the first one's files cached
+        # instead of parsing them again alongside it.
+        self.reading = threading.Lock()
         self._pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="cvscore-run")
 
     # --- storage ---------------------------------------------------------------------
@@ -105,13 +109,25 @@ class RunManager:
 
     def results(self, run_id: str) -> dict[str, Any]:
         out = self.path(run_id)
+        meta = self.meta(run_id)
 
         def load(name: str, default: Any) -> Any:
             p = out / name
             return json.loads(p.read_text("utf-8")) if p.is_file() else default
 
+        if meta.status in ("reading", "assessing"):
+            # The app polls this every second while a run is going and shows only the
+            # progress: don't read and send the candidate list each time.
+            return {
+                "meta": meta.model_dump(),
+                "results": None,
+                "identity": {},
+                "candidates": [],
+                "screening": None,
+                "job": None,
+            }
         return {
-            "meta": self.meta(run_id).model_dump(),
+            "meta": meta.model_dump(),
             "results": load("results.json", None),
             "identity": load("identity_map.json", {}),
             "candidates": load("candidates.json", []),
@@ -176,13 +192,14 @@ class RunManager:
         try:
             cache_dir = self.runs_dir / ".cache" if self.cache else None
             llm = self.provider(settings, cache_dir)
-            ingested = ingest(
-                Path(request.folder),
-                overrides=request.overrides,
-                exclude=request.exclude,
-                ocr=ocr_hook(llm, settings.ocr),
-                cache_dir=cache_dir,
-            )
+            with self.reading:
+                ingested = ingest(
+                    Path(request.folder),
+                    overrides=request.overrides,
+                    exclude=request.exclude,
+                    ocr=ocr_hook(llm, settings.ocr),
+                    cache_dir=cache_dir,
+                )
             summaries: list[CandidateSummary] = [
                 summarize(s, settings.location.home_country) for s in ingested.sources
             ]

@@ -267,13 +267,14 @@ def create_app(
     @app.post("/api/scan")
     def scan(request: ScanRequest) -> ScanResult:
         folder = inside_root(request.folder)
-        sources = discover_folder(
-            folder,
-            cached_extractor(extract_document, runs_dir / ".cache"),
-            overrides=request.overrides,
-            exclude=request.exclude,
-            ocr=scan_ocr(),
-        )
+        with runs.reading:
+            sources = discover_folder(
+                folder,
+                cached_extractor(extract_document, runs_dir / ".cache"),
+                overrides=request.overrides,
+                exclude=request.exclude,
+                ocr=scan_ocr(),
+            )
         try:
             home = load_settings(config).location.home_country
         except (FileNotFoundError, ValidationError, ValueError):

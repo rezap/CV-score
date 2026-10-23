@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 import unicodedata
 from collections.abc import Iterable
+from functools import lru_cache
 from typing import Literal
 
 from cvscore.models import BlockKind, TextBlock
@@ -27,8 +28,11 @@ _LISTING_SECTION = re.compile(
 )
 
 
+@lru_cache(maxsize=8192)  # the same blocks are folded for every term of every check
 def fold(text: str) -> str:
     """Lower case without accents: "Statistikk"/"statistikk", "Résumé"/"resume"."""
+    if text.isascii():
+        return text  # nothing to decompose
     text = unicodedata.normalize("NFKD", text)
     return "".join(ch for ch in text if not unicodedata.combining(ch))
 

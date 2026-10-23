@@ -194,6 +194,14 @@ def test_cached_embedder(tmp_path: Path) -> None:
     assert embed(["ab", "abc"]) == [[2.0, 1.0], [3.0, 1.0]]
     assert embed(["abc", "abcd"]) == [[3.0, 1.0], [4.0, 1.0]]
     assert calls == [["ab", "abc"], ["abcd"]]  # only new texts are sent
+    stored = sorted(tmp_path.rglob("*.*"))
+    assert [p.suffix for p in stored] == [".f64"] * 3  # raw floats, not JSON
+
+    # Vectors cached as JSON by earlier versions are still used.
+    stored[0].with_suffix(".json").write_text("[0.5, 0.25]")
+    stored[0].unlink()
+    again = cached_embedder(Model(), "m", tmp_path)  # type: ignore[arg-type]
+    assert [0.5, 0.25] in again(["ab", "abc", "abcd"]) and len(calls) == 2
 
 
 def test_terms_only_in_a_skills_list_count_half_when_use_is_required() -> None:

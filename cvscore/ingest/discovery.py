@@ -213,7 +213,8 @@ def _different_named_folders(a: _Group, b: _Group) -> bool:
 
 def _units(folder: Path, files: dict[Path, CandidateFile], root: Path) -> list[_Group]:
     """Split a folder into starting groups: whole single-person folders, else single files."""
-    inside = [f for p, f in files.items() if folder in p.parents]
+    depth = len(folder.parts)
+    inside = [f for p, f in files.items() if p.parts[:depth] == folder.parts and p != folder]
     if not inside:
         return []
     if folder != root and _one_person(inside):
@@ -225,39 +226,63 @@ def _units(folder: Path, files: dict[Path, CandidateFile], root: Path) -> list[_
 
 
 def _merge_all(groups: list[_Group]) -> list[_Group]:
-    """Merge groups that share an email, a name, or a file name (minus type words)."""
+    """Merge groups that share an email, a name, or a file name (minus type words).
 
-    def keys(g: _Group) -> Iterable[tuple[str, str]]:
-        for e in g.emails():
-            yield "email", e
+    The first mergeable pair in (i, j) order is merged (j into i) until none is left.
+    Pairs are only tested again when one of their groups has changed, so this finds the
+    same merges as rescanning every pair after each merge, without the cubic cost."""
+
+    def keys(g: _Group) -> set[tuple[str, str]]:
+        found = {("email", e) for e in g.emails()}
         for f in g.files:
             # "<who>_cv.pdf", "<who> - cover letter.docx": the file name minus the words
             # that describe the document. A bare "<who>.pdf" is not used.
             key = filename_key(f.path)
             if len(key) >= 2 and key != " ".join(file_tokens(f.path.stem)):
-                yield "file name", key
+                found.add(("file name", key))
+        return found
 
-    merged = True
-    while merged:
-        merged = False
-        for i, a in enumerate(groups):
-            for j in range(i + 1, len(groups)):
-                b = groups[j]
-                if _conflict(a, b) or _different_named_folders(a, b):
-                    continue
-                shared = {k for k in keys(a)} & {k for k in keys(b)}
-                why = {kind for kind, _ in shared}
-                if not why and any(same_person(x, y) for x in a.names() for y in b.names()):
-                    why = {"name"}
+    groups = list(groups)
+    keysets = [keys(g) for g in groups]
+
+    def reasons(i: int, j: int) -> set[str]:
+        a, b = groups[i], groups[j]
+        if _conflict(a, b) or _different_named_folders(a, b):
+            return set()
+        why = {kind for kind, _ in keysets[i] & keysets[j]}
+        if not why and any(same_person(x, y) for x in a.names() for y in b.names()):
+            why = {"name"}
+        return why
+
+    def merge(i: int, j: int, why: set[str]) -> None:
+        a, b = groups[i], groups[j]
+        a.files.extend(b.files)
+        a.reasons |= why
+        a.folder = a.folder or b.folder
+        del groups[j], keysets[j]
+        keysets[i] = keys(a)
+
+    i, changed = 0, False
+    while i < len(groups):
+        # Rows before i were checked against every other group. When group i has just
+        # grown, only their pair with it can have become mergeable.
+        while changed:
+            for k in range(i):
+                why = reasons(k, i)
                 if why:
-                    a.files.extend(b.files)
-                    a.reasons |= why
-                    a.folder = a.folder or b.folder
-                    del groups[j]
-                    merged = True
+                    merge(k, i, why)
+                    i = k
                     break
-            if merged:
+            else:
                 break
+        for j in range(i + 1, len(groups)):
+            why = reasons(i, j)
+            if why:
+                merge(i, j, why)
+                changed = True
+                break
+        else:
+            i, changed = i + 1, False
     return groups
 
 

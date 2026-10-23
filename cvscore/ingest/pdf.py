@@ -381,8 +381,8 @@ def extract_pdf(path: Path, *, doc_type: DocType, display_path: str) -> SourceDo
         pages_lines: list[list[_Line]] = []
         heights: list[float] = []
         widths: list[float] = []
-        for i, page in enumerate(pdf.pages, start=1):
-            page = page.filter(_not_icon)
+        for i, original in enumerate(pdf.pages, start=1):
+            page = original.filter(_not_icon)
             try:
                 words = page.extract_words(
                     extra_attrs=["size"], keep_blank_chars=False, x_tolerance_ratio=WORD_GAP_RATIO
@@ -405,6 +405,10 @@ def extract_pdf(path: Path, *, doc_type: DocType, display_path: str) -> SourceDo
             pages_lines.append(_group_lines(words))
             heights.append(float(page.height))
             widths.append(float(page.width))
+            # pdfplumber keeps every parsed page object until the file is closed: hundreds
+            # of MB for a long PDF. Only the words are needed from here on.
+            page.close()
+            original.close()
         n_pages = len(pdf.pages)
 
     all_sizes = [w["size"] for lines in pages_lines for ln in lines for w in ln.words]

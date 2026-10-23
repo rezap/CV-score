@@ -239,6 +239,45 @@ class Settings(BaseSettings):
         )
 
 
+def config_path(path: str | Path | None = None) -> Path:
+    """The config file ``load_settings(path)`` reads: ``path``, ``$CVSCORE_CONFIG`` or
+    ``./cvscore.yaml``."""
+    return (
+        Path(path)
+        if path is not None
+        else Path(os.environ.get(CONFIG_PATH_ENV, DEFAULT_CONFIG_PATH))
+    )
+
+
+def env_overrides() -> list[str]:
+    """``CVSCORE_*`` variables set in the environment: they win over the config file."""
+    return sorted(k for k in os.environ if k.startswith("CVSCORE_") and k != CONFIG_PATH_ENV)
+
+
+def save_settings(settings: Settings, path: str | Path) -> Path | None:
+    """Write ``settings`` to ``path`` as YAML (values that differ from the defaults only).
+    The previous file is kept next to it as ``<name>.bak``, which is returned. Secrets are
+    never part of the settings: keys stay in the environment."""
+    import yaml
+
+    target = Path(path)
+    backup = None
+    if target.is_file():
+        backup = target.with_name(target.name + ".bak")
+        backup.write_bytes(target.read_bytes())
+    data = settings.model_dump(mode="json", exclude_defaults=True)
+    header = (
+        "# cvscore settings, saved from the web app (cvscore serve).\n"
+        "# The previous version, with any comments, is in "
+        f"{backup.name if backup else 'no backup (new file)'}.\n"
+        "# See cvscore.example.yaml for every setting with explanations.\n"
+    )
+    target.write_text(
+        header + yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
+    )
+    return backup
+
+
 def load_settings(path: str | Path | None = None, **overrides: Any) -> Settings:
     """Load settings from ``path`` (or ``$CVSCORE_CONFIG``, or ``./cvscore.yaml``)."""
     if path is None:

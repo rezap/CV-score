@@ -275,3 +275,35 @@ def test_home_country_from_the_config(client: TestClient, root: Path, tmp_path: 
     result = client.post("/api/scan", json={"folder": str(root)}).json()
     alex = next(c for c in result["candidates"] if c["label"] == "Alex Sample")
     assert alex["location"]["region"] == "home"  # a Rotterdam address
+
+
+def test_settings_round_trip(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    got = client.get("/api/settings").json()
+    assert got["exists"] and got["path"].endswith("cvscore.yaml")
+    assert got["settings"]["langfuse"]["enabled"] is False
+    assert got["secrets"]["OPENAI_API_KEY"] is True and "sk-test" not in str(got)
+
+    settings = got["settings"]
+    settings["provider"] = "openai"
+    settings["openai"]["models"] = {"scorer": {"model": "gpt-test"}}
+    settings["ranking"]["repeat_top"] = 3
+    settings["location"]["home_country"] = "NO"
+    saved = client.put("/api/settings", json=settings).json()
+    assert saved["backup"].endswith("cvscore.yaml.bak")
+    text = (tmp_path / "cvscore.yaml").read_text()
+    assert "repeat_top: 3" in text and "gpt-test" in text
+    assert "home_country" not in text  # the default is not written
+    # The app reads the new file at once (no restart).
+    status = client.get("/api/status").json()
+    assert status["provider"] == "openai" and status["models"]["scorer"] == "gpt-test"
+
+    # A non-default country is written and read back.
+    settings["location"]["home_country"] = "DE"
+    client.put("/api/settings", json=settings)
+    assert client.get("/api/settings").json()["settings"]["location"]["home_country"] == "DE"
+
+    bad = client.put("/api/settings", json={**settings, "ranking": {"tie_margin": -1}})
+    assert bad.status_code == 422

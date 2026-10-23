@@ -160,3 +160,17 @@ export function RegionBadge({ location }: { location?: Location }) {
     </span>
   );
 }
+
+export type Theme = "system" | "light" | "dark";
+
+/** Light, dark, or the computer's setting; kept in this browser. index.html applies the
+ * saved choice before the first paint, so the page does not flash. */
+export function useTheme(): [Theme, (t: Theme) => void] {
+  const [theme, setTheme] = usePersistent<Theme>("theme", "system");
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === "system") delete root.dataset.theme;
+    else root.dataset.theme = theme;
+  }, [theme]);
+  return [theme, setTheme];
+}

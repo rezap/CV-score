@@ -85,6 +85,15 @@ cvscore serve                                           # http://127.0.0.1:8000
 Each step folds to a one-line summary (steps 1 and 2 fold when a run starts), and the
 folder, job, run options and last run come back after a reload.
 
+**Settings** (⚙ in the top bar) shows and edits every setting in `cvscore.yaml`: provider
+and models per role, embeddings, ranking, screening, OCR, location and Langfuse. Saving
+writes the file (keeping the previous one as `cvscore.yaml.bak`, so comments in a
+hand-written file are not lost) and applies to the next run without a restart. API keys
+are never shown or stored there: the panel only says whether they are set in the
+environment. `CVSCORE_*` variables still win over the file, and the panel lists any that
+are set. **Theme:** Light, Dark or System (follows your computer), from the button next to
+Settings or in the panel; kept in the browser.
+
 The home country is `location.home_country` in `cvscore.yaml` (default `NO`; an ISO code
 or a name such as `Germany`). **Location** is read from the documents without a model: the address or town in the CV's
 top area and contact lines, the sender lines of a cover letter, "I live in ..." sentences,
